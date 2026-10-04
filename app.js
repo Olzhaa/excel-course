@@ -119,7 +119,7 @@
       '<h1>' + esc(S.course ? S.course.title : 'Course') + '</h1>' +
       '<p class="muted" style="margin:0">' + esc(S.course ? S.course.tagline : '') + '</p>' +
       (google ? '<div id="g-btn" style="min-height:44px"></div><div class="or-line"><span>or use your login and password</span></div>' : '') +
-      '<label class="field" for="lg-login">Login or college email<input id="lg-login" name="username" type="text" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>' +
+      '<label class="field" for="lg-login">' + (google ? 'Login or college email' : 'Login') + '<input id="lg-login" name="username" type="text" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>' +
       '<label class="field" for="lg-pass">Password<input id="lg-pass" name="password" type="password" autocomplete="current-password" required></label>' +
       '<div class="error" id="lg-err">' + esc(err || '') + '</div>' +
       '<button class="btn primary" type="submit" id="lg-btn">Log in</button>' +
