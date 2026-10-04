@@ -255,3 +255,6 @@ table.gradebook a:hover { color: var(--accent); text-decoration: underline; }
   .week-row .wk { padding-top: 6px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+.or-line { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+.or-line::before, .or-line::after { content: ""; flex: 1; border-top: 1px solid var(--line); }

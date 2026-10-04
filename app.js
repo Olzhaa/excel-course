@@ -112,16 +112,18 @@
 
   // ---------- views ----------
   function viewLogin(err) {
+    var google = !!CONFIG.googleClientId;
     app.innerHTML =
       '<div class="login-page"><form class="card login-card" id="login-form" autocomplete="on">' +
       '<div class="row"><span class="brand-mark">' + '<i></i>'.repeat(9) + '</span><span class="eyebrow">' + esc(S.course ? S.course.group : '') + '</span></div>' +
       '<h1>' + esc(S.course ? S.course.title : 'Course') + '</h1>' +
       '<p class="muted" style="margin:0">' + esc(S.course ? S.course.tagline : '') + '</p>' +
-      '<label class="field" for="lg-login">Login<input id="lg-login" name="username" type="text" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>' +
+      (google ? '<div id="g-btn" style="min-height:44px"></div><div class="or-line"><span>or use your login and password</span></div>' : '') +
+      '<label class="field" for="lg-login">Login or college email<input id="lg-login" name="username" type="text" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>' +
       '<label class="field" for="lg-pass">Password<input id="lg-pass" name="password" type="password" autocomplete="current-password" required></label>' +
       '<div class="error" id="lg-err">' + esc(err || '') + '</div>' +
       '<button class="btn primary" type="submit" id="lg-btn">Log in</button>' +
-      (CONFIG.demo ? '<p class="small muted" style="margin:0">Preview accounts: <span class="mono">student / student123</span> or <span class="mono">teacher / teacher123</span></p>' : '<p class="small muted" style="margin:0">Your login and password are on the card from your teacher.</p>') +
+      (CONFIG.demo ? '<p class="small muted" style="margin:0">Preview accounts: <span class="mono">student / student123</span> or <span class="mono">teacher / teacher123</span></p>' : '<p class="small muted" style="margin:0">' + (google ? 'Use your college Google account, or the login and password from your teacher.' : 'Your login and password are on the card from your teacher.') + '</p>') +
       '<div class="sheet-tabs"><span class="on">Login</span><span>Lessons</span><span>Practice</span><span>Quiz</span><span>Projects</span></div>' +
       '</form></div>';
     document.getElementById('login-form').addEventListener('submit', function (e) {
@@ -130,11 +132,41 @@
       S.creds = { login: document.getElementById('lg-login').value.trim().toLowerCase(), password: document.getElementById('lg-pass').value.trim() };
       api('login').then(function (r) {
         if (!r.ok) { S.creds = null; viewLogin(r.error); return; }
-        S.user = r.user; S.progress = r.progress || {}; S.settings = r.settings;
-        store(CRED_KEY, S.creds);
-        if (!location.hash || location.hash === '#/login') location.hash = isTeacher() ? '#/teacher' : '#/home'; else render();
+        S.creds.login = r.user.login;
+        afterLogin(r);
       });
     });
+    if (google) renderGoogleButton();
+  }
+  function afterLogin(r) {
+    S.user = r.user; S.progress = r.progress || {}; S.settings = r.settings;
+    store(CRED_KEY, S.creds);
+    if (!location.hash || location.hash === '#/login') location.hash = isTeacher() ? '#/teacher' : '#/home'; else render();
+  }
+  function renderGoogleButton() {
+    function draw() {
+      var el = document.getElementById('g-btn');
+      if (!el || !window.google || !google.accounts) return;
+      google.accounts.id.initialize({
+        client_id: CONFIG.googleClientId,
+        callback: function (resp) {
+          var e = document.getElementById('lg-err'); if (e) e.textContent = 'Signing in…';
+          api('googleLogin', { idToken: resp.credential }).then(function (r) {
+            if (!r.ok) { viewLogin(r.error); return; }
+            S.creds = r.creds;
+            afterLogin(r);
+          });
+        }
+      });
+      google.accounts.id.renderButton(el, { theme: 'outline', size: 'large', text: 'signin_with', shape: 'rectangular', width: Math.min(360, el.clientWidth || 320) });
+    }
+    if (window.google && window.google.accounts) { draw(); return; }
+    if (!document.getElementById('gsi-script')) {
+      var sc = document.createElement('script');
+      sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.id = 'gsi-script';
+      sc.onload = draw;
+      document.head.appendChild(sc);
+    } else document.getElementById('gsi-script').addEventListener('load', draw);
   }
 
   function viewHome() {
@@ -448,10 +480,10 @@
   }
   function viewTeacherAccounts() {
     return teacherView(function (T) {
-      var h = '<section class="lesson-head"><div class="eyebrow">Teacher</div><h1>Student accounts</h1><p class="lead">To change names, edit the <b>Students</b> sheet in your Google Sheet. New passwords appear here at once.</p></section>' +
-        '<div class="gradebook-wrap"><table class="gradebook"><thead><tr><th>#</th><th class="name">Name</th><th>Login</th><th>Password</th><th>Last login</th><th></th></tr></thead><tbody>' +
+      var h = '<section class="lesson-head"><div class="eyebrow">Teacher</div><h1>Student accounts</h1><p class="lead">To change names or add college emails, edit the <b>Students</b> tab of your Google Sheet (name in column C, email in column F). Students with an email can use “Sign in with Google”.</p></section>' +
+        '<div class="gradebook-wrap"><table class="gradebook"><thead><tr><th>#</th><th class="name">Name</th><th>Login</th><th>College email</th><th>Password</th><th>Last login</th><th></th></tr></thead><tbody>' +
         T.students.map(function (u, i) {
-          return '<tr><td>' + (i + 1) + '</td><td class="name">' + esc(u.name) + '</td><td class="mono">' + esc(u.login) + '</td><td class="mono">' + esc(u.password) + '</td><td class="small">' + esc(fmtDate(u.lastLogin)) + '</td><td><button class="btn small" data-act="resetpw" data-student="' + esc(u.login) + '">New password</button></td></tr>';
+          return '<tr><td>' + (i + 1) + '</td><td class="name">' + esc(u.name) + '</td><td class="mono">' + esc(u.login) + '</td><td class="mono">' + (u.email ? esc(u.email) : '<span class="muted">—</span>') + '</td><td class="mono">' + esc(u.password) + '</td><td class="small">' + esc(fmtDate(u.lastLogin)) + '</td><td><button class="btn small" data-act="resetpw" data-student="' + esc(u.login) + '">New password</button></td></tr>';
         }).join('') + '</tbody></table></div>';
       return shell('T3', 'Student accounts', h, { active: 'taccounts', wide: true });
     });
