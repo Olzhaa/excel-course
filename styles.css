@@ -262,3 +262,5 @@ table.gradebook a:hover { color: var(--accent); text-decoration: underline; }
 .quiz-timer { position: sticky; top: calc(60px + env(safe-area-inset-top, 0px)); z-index: 10; align-self: start; justify-self: end; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 6px 16px; font-family: var(--f-mono); font-weight: 600; box-shadow: var(--shadow); }
 .quiz-timer.low { color: var(--bad); border-color: var(--bad); }
 .no-copy { -webkit-user-select: none; user-select: none; }
+.personal { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+.personal table { background: var(--paper); }

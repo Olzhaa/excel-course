@@ -161,7 +161,32 @@
   function afterLogin(r) {
     S.user = r.user; S.progress = r.progress || {}; S.settings = r.settings;
     store(CRED_KEY, S.creds);
-    if (!location.hash || location.hash === '#/login') location.hash = isTeacher() ? '#/teacher' : '#/home'; else render();
+    loadVariant().then(function () {
+      if (!location.hash || location.hash === '#/login') location.hash = isTeacher() ? '#/teacher' : '#/home'; else render();
+    });
+  }
+  // Every student has personal data in some tasks and projects: overlay data/v/vNN.json on the common course.
+  function loadVariant() {
+    if (!S.baseCourse) S.baseCourse = S.course;
+    S.course = S.baseCourse;
+    var v = S.user && !isTeacher() && Number(S.user.variant);
+    if (!v) return Promise.resolve();
+    var id = (v < 10 ? '0' : '') + v;
+    var src = window.COURSE_VARIANTS ? Promise.resolve(window.COURSE_VARIANTS[String(v)] || null)
+      : fetch('data/v/v' + id + '.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : null; });
+    return src.then(function (ov) {
+      if (!ov) return;
+      var c = JSON.parse(JSON.stringify(S.baseCourse));
+      c.lessons.forEach(function (l) {
+        l.practice = l.practice.map(function (p) { var o = ov.practice && ov.practice[p.id]; return o ? Object.assign({}, p, o) : p; });
+      });
+      c.projects.forEach(function (p) {
+        var o = ov.projects && ov.projects[p.id];
+        if (o) { p.personal = o.personal; if (o.file) p.file = o.file; }
+      });
+      c.variant = v;
+      S.course = c;
+    }).catch(function () {});
   }
   function renderGoogleButton() {
     function draw() {
@@ -413,6 +438,7 @@
       '<div class="row">' + p.skills.map(function (s) { return '<span class="pill accent">' + esc(s) + '</span>'; }).join('') + '</div></section>';
     if (!open) return shell(p.id, p.title, h + '<div class="card notice">This project opens after you finish lesson ' + p.openAfter + '.</div>', { active: 'projects' });
     if (p.file) h += '<div>' + fileLink(p.file) + '</div>';
+    if (p.personal) h += '<section class="card prose personal"><div class="eyebrow">Your personal task · only you have these values</div>' + md(p.personal) + '</section>';
     h += '<article class="card prose">' + md(p.brief) + '</article>';
     h += '<section class="card"><h2 style="font-size:20px;margin-bottom:10px">How it is graded</h2><div class="table-wrap"><table class="grid"><thead><tr><th>Criterion</th><th>Points</th></tr></thead><tbody>' +
       p.rubric.map(function (r) { return '<tr><td>' + esc(r.criterion) + '</td><td class="num">' + r.points + '</td></tr>'; }).join('') + '<tr><th>Total</th><th class="num">100</th></tr></tbody></table></div></section>';
@@ -528,7 +554,7 @@
       if (!u) return shell('#N/A', 'Student', '<div class="card">Student not found.</div>', { active: 'teacher' });
       var pr = T.prog[login] || {};
       var o = overall(pr);
-      var h = '<section class="lesson-head"><div class="eyebrow"><a href="#/teacher">← Gradebook</a></div><h1>' + esc(u.name) + '</h1><p class="lead mono">' + esc(u.login) + '</p></section>' +
+      var h = '<section class="lesson-head"><div class="eyebrow"><a href="#/teacher">← Gradebook</a></div><h1>' + esc(u.name) + '</h1><p class="lead mono">' + esc(u.login) + (u.variant ? ' · variant ' + u.variant : '') + '</p></section>' +
         '<section class="card stats">' + stat('Progress', o.pct + '%', '') + stat('Quiz average', o.quizAvg == null ? '—' : o.quizAvg + '%', '') + stat('Practice solved', o.psolved + ' / ' + o.ptotal, '') +
         '<div class="stat"><span class="small muted">Password</span><b class="mono" style="font-size:20px">' + esc(u.password) + '</b><button class="btn small" data-act="resetpw" data-student="' + esc(login) + '">Make new password</button></div></section>';
       var upTo = unlockedUpTo(pr);
@@ -708,7 +734,7 @@
     if (t.dataset.go) { go(t.dataset.go); return; }
     var act = t.dataset.act;
     if (act === 'menu') { S.menuOpen = !S.menuOpen; document.querySelector('.side').classList.toggle('open', S.menuOpen); }
-    if (act === 'logout') { store(CRED_KEY, null); S.user = null; S.creds = null; S.progress = {}; S.teacher = null; S.quizResult = {}; S.practiceResult = {}; go('#/login'); }
+    if (act === 'logout') { store(CRED_KEY, null); S.user = null; S.creds = null; S.progress = {}; if (S.baseCourse) S.course = S.baseCourse; S.teacher = null; S.quizResult = {}; S.practiceResult = {}; go('#/login'); }
     if (act === 'quizstart') {
       if (t.dataset.confirm !== '1') { t.dataset.confirm = '1'; t.textContent = 'The timer starts now. Click again to begin'; return; }
       t.disabled = true; startQuiz(t.dataset.lesson);
@@ -761,7 +787,7 @@
       S.creds = saved;
       app.innerHTML = '<div class="loading">Loading…</div>';
       api('login').then(function (r) {
-        if (r.ok) { S.user = r.user; S.progress = r.progress || {}; S.settings = r.settings; render(); }
+        if (r.ok) { S.user = r.user; S.progress = r.progress || {}; S.settings = r.settings; loadVariant().then(render); }
         else { S.creds = null; store(CRED_KEY, null); viewLogin(); }
       });
     } else viewLogin();

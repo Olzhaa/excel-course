@@ -1,0 +1,1 @@
+apiUrl is set in index.html (window.COURSE_CONFIG).
