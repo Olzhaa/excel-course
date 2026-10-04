@@ -428,7 +428,7 @@
   }
 
   function viewProjects() {
-    return shell('P', 'Projects', '<section class="lesson-head"><div class="eyebrow">Graded by your teacher</div><h1>Projects</h1><p class="lead">Three bigger tasks that join many skills together. Each is graded out of 100.</p></section>' + projectsList(), { active: 'projects' });
+    return shell('P', 'Projects', '<section class="lesson-head"><div class="eyebrow">Graded by your teacher</div><h1>Projects</h1><p class="lead">Four bigger tasks that join many skills together. Each is graded out of 100. The last one, the capstone, you defend in person in class.</p></section>' + projectsList(), { active: 'projects' });
   }
   function viewProject(id) {
     var p = S.course.projects.filter(function (x) { return x.id === id; })[0];
