@@ -3,7 +3,7 @@
   'use strict';
 
   var CONFIG = window.COURSE_CONFIG || {};
-  var S = { course: null, user: null, creds: null, progress: {}, settings: { openLessons: 0, quizAttempts: 3 }, quizDraft: {}, quizResult: {}, practiceResult: {}, teacher: null, menuOpen: false };
+  var S = { course: null, user: null, creds: null, progress: {}, settings: { openLessons: 0, quizAttempts: 1 }, quizDraft: {}, quizResult: {}, practiceResult: {}, teacher: null, menuOpen: false };
   var app = document.getElementById('app');
   var CRED_KEY = 'xlcourse-creds';
 
