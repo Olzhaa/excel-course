@@ -232,6 +232,14 @@
       stat('Quiz average', o.quizAvg == null ? '—' : o.quizAvg + '%', '<span class="small muted">' + o.quizCount + ' quizzes taken</span>') +
       stat('Practice tasks solved', o.psolved + ' / ' + o.ptotal, '') +
       stat('Projects submitted', subs + ' / ' + S.course.projects.length, '') + '</section>';
+    var started = Object.keys(S.progress).some(function (k) { return k !== 'UNLOCK'; });
+    if (!started) {
+      h += '<section class="card personal prose"><div class="eyebrow">Start here</div><h2 style="font-size:22px;margin:6px 0 8px">Your first practice task in 3 steps</h2><ol>' +
+        '<li>Open <a href="#/lesson/L01/practice"><b>Lesson 1 → Practice</b></a>.</li>' +
+        '<li>Click the green <b>XLSX</b> file to download it. Open it in Excel, or in Google Sheets with <b>File → Import → Upload</b>. The file is only yours: classmates have different data.</li>' +
+        '<li>Do the steps, type your answers under <b>Check your work</b> and press <b>Check</b>. Every check is saved and your teacher sees it. Wrong answers are fine: fix them and press Check again.</li></ol>' +
+        '<a class="btn primary" href="#/lesson/L01/practice">Start Lesson 1 practice</a></section>';
+    }
     if (next) {
       h += '<section class="card"><div class="eyebrow">Continue</div><div class="row" style="justify-content:space-between;margin-top:6px">' +
         '<div style="min-width:0"><h2 style="font-size:22px">' + esc(next.id) + ' · ' + esc(next.title) + '</h2><p class="muted" style="margin:4px 0 0">' + esc(next.summary) + '</p></div>' +
@@ -544,6 +552,19 @@
       var subs = 0, waiting = 0;
       T.students.forEach(function (u) { S.course.projects.forEach(function (p) { var r = (T.prog[u.login] || {})[p.id]; if (r) { subs++; if (r.detail.grade === undefined || r.detail.grade === '') waiting++; } }); });
       if (waiting) h += '<a class="card notice" href="#/teacher/projects" style="text-decoration:none;color:var(--ink)"><b>' + waiting + ' project submission' + (waiting === 1 ? '' : 's') + '</b> waiting for your grade →</a>';
+      var never = [], idle = [];
+      T.students.forEach(function (u) {
+        var pr = T.prog[u.login] || {};
+        var did = Object.keys(pr).some(function (k) { return k !== 'UNLOCK'; });
+        if (did) return;
+        (u.lastLogin ? idle : never).push(u);
+      });
+      var who = function (list) { return list.map(function (u) { return '<a href="#/teacher/s/' + encodeURIComponent(u.login) + '">' + esc(u.name) + '</a>'; }).join(', '); };
+      if (never.length || idle.length) {
+        h += '<section class="card notice" style="display:grid;gap:6px"><b>Not started yet: ' + (never.length + idle.length) + ' of ' + T.students.length + ' students</b>' +
+          (idle.length ? '<div><span class="small muted">Logged in but never pressed Check (' + idle.length + '):</span> ' + who(idle) + '</div>' : '') +
+          (never.length ? '<div><span class="small muted">Never logged in (' + never.length + '):</span> ' + who(never) + '</div>' : '') + '</section>';
+      }
       h += '<p class="small muted" style="margin:0">Each student moves to the next lesson only after finishing the previous one (all practice tasks + quiz). "Lessons available" is the furthest anyone can go.</p>';
       h += '<div class="legend"><span><span class="pill good">80%+</span></span><span><span class="pill warn">50–79%</span></span><span><span class="pill bad">below 50%</span></span><span>Q = best quiz score, P = practice tasks solved, ⚠ = quiz done very fast or left the page 2+ times</span></div>';
       h += '<div class="gradebook-wrap" tabindex="0" role="region" aria-label="Gradebook table, scroll sideways"><table class="gradebook"><thead><tr><th class="name" rowspan="2">Student</th><th rowspan="2">Now on</th><th rowspan="2">Progress</th><th rowspan="2">Quiz avg</th>';
