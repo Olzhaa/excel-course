@@ -672,37 +672,56 @@
   // ---------- weekly grades (0-100, computed on the server) ----------
   function loadWeekly(force) {
     if (S.weekly && !force) return Promise.resolve(S.weekly);
-    return api('weekly').then(function (r) { S.weekly = r.ok ? r.rows : []; return S.weekly; });
+    return api('weekly').then(function (r) { S.weekly = r.ok ? r.rows : []; S.weeklyProjects = r.projectIds || []; if (S.weekly[0] && !Array.isArray(S.weekly[0].weeks[0])) { S.weekly = []; toast('Update Code.gs in Apps Script (Deploy → New version) to see these grades.'); } return S.weekly; });
   }
   function gradeCls(v) { return v == null ? '' : v >= 80 ? 'c-good' : v >= 50 ? 'c-warn' : 'c-bad'; }
+  function flatLessons(r) { return [].concat.apply([], r.weeks); }
   function weekAvg(ws) { var d = ws.filter(function (v) { return v != null; }); return d.length ? Math.round(d.reduce(function (a, b) { return a + b; }, 0) / d.length) : null; }
+  function lid2(n) { return 'L' + (n < 10 ? '0' : '') + n; }
+  function projCell(g) {
+    if (g == null) return '<td class="num"><span class="muted">—</span></td>';
+    if (g === 'submitted') return '<td class="num"><span class="muted small">sent</span></td>';
+    return '<td class="num ' + gradeCls(g) + '"><b>' + g + '</b></td>';
+  }
   function weeklyTable(rows, withNames) {
-    var n = rows.length ? rows[0].weeks.length : 10, h = '<div class="gradebook-wrap" tabindex="0" role="region" aria-label="Weekly grades, scroll sideways"><table class="gradebook"><thead><tr>' + (withNames ? '<th class="name">Student</th>' : '');
-    for (var w = 1; w <= n; w++) h += '<th>W' + w + '</th>';
-    h += '<th>Average</th></tr></thead><tbody>';
+    var n = rows.length ? rows[0].weeks.length : 10, pids = S.weeklyProjects || [];
+    var h = '<div class="gradebook-wrap" tabindex="0" role="region" aria-label="Weekly grades, scroll sideways"><table class="gradebook"><thead><tr>' + (withNames ? '<th class="name" rowspan="2">Student</th>' : '');
+    for (var w = 1; w <= n; w++) h += '<th colspan="2" scope="colgroup" class="wk">Week ' + w + '</th>';
+    h += '<th rowspan="2">Lessons avg</th>';
+    pids.forEach(function (id) { h += '<th rowspan="2" class="pr">' + esc(id) + '</th>'; });
+    h += '</tr><tr>';
+    for (w = 1; w <= n; w++) h += '<th class="wk">' + lid2(2 * w - 1) + '</th><th>' + lid2(2 * w) + '</th>';
+    h += '</tr></thead><tbody>';
     rows.forEach(function (r) {
       h += '<tr>' + (withNames ? '<td class="name"><a href="#/teacher/s/' + encodeURIComponent(r.login) + '">' + esc(r.name) + '</a></td>' : '');
-      r.weeks.forEach(function (v) { h += '<td class="num ' + gradeCls(v) + '">' + (v == null ? '<span class="muted">—</span>' : v) + '</td>'; });
-      var a = weekAvg(r.weeks);
-      h += '<td class="num ' + gradeCls(a) + '"><b>' + (a == null ? '—' : a) + '</b></td></tr>';
+      flatLessons(r).forEach(function (v, i) { h += '<td class="num ' + gradeCls(v) + (i % 2 ? '' : ' wk') + '">' + (v == null ? '<span class="muted">—</span>' : v) + '</td>'; });
+      var a = weekAvg(flatLessons(r));
+      h += '<td class="num ' + gradeCls(a) + '"><b>' + (a == null ? '—' : a) + '</b></td>';
+      pids.forEach(function (id) { h += projCell((r.projects || {})[id]); });
+      h += '</tr>';
     });
     return h + '</tbody></table></div>';
   }
-  var WEEKLY_RULE = 'Each week has 2 lessons. A lesson gives up to 100 points: 50 for practice tasks solved and 50 for the best quiz score. The week grade is the average of its 2 lessons. "—" means the week has not opened yet.';
+  var WEEKLY_RULE = 'Each week has 2 lessons and each lesson gets its own grade, up to 100 points: 50 for practice tasks solved and 50 for the best quiz score. PR1–PR4 are project grades from the teacher ("sent" = submitted, not graded yet). "—" means not opened yet.';
   function viewTeacherWeekly() {
     if (!S.weekly) { loadWeekly().then(render); return shell('TW', 'Weekly grades', '<div class="loading">Loading…</div>', { active: 'tweekly' }); }
-    var h = '<section class="lesson-head"><div class="eyebrow">Teacher · ' + esc(S.course.group) + '</div><h1>Weekly grades</h1><p class="lead">0–100 for every week, based on the work each student has done.</p></section>' +
+    var h = '<section class="lesson-head"><div class="eyebrow">Teacher · ' + esc(S.course.group) + '</div><h1>Weekly grades</h1><p class="lead">Two grades a week (one per lesson) and project grades, 0–100.</p></section>' +
       '<p class="small muted" style="margin:0">' + WEEKLY_RULE + ' The same table is saved in your Google Sheet, tab <b>Weekly grades</b>, every time you open the Gradebook.</p>' +
       '<div class="row"><button class="btn" data-act="weeklyrefresh">Refresh</button><button class="btn" data-act="weeklycsv">Download CSV</button></div>' +
       weeklyTable(S.weekly, true);
     return shell('TW', 'Weekly grades', h, { active: 'tweekly' });
   }
   function weeklyCsv() {
-    var n = S.weekly.length ? S.weekly[0].weeks.length : 10, head = ['Name', 'Login'];
-    for (var w = 1; w <= n; w++) head.push('Week ' + w);
-    head.push('Average');
-    var rows = [head].concat(S.weekly.map(function (r) { var a = weekAvg(r.weeks); return [r.name, r.login].concat(r.weeks.map(function (v) { return v == null ? '' : v; })).concat([a == null ? '' : a]); }));
-    var csv = '\ufeff' + rows.map(function (r) { return r.map(function (v) { v = String(v); if (/^[=+\-@]/.test(v)) v = "'" + v; return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\n');
+    var n = S.weekly.length ? S.weekly[0].weeks.length : 10, pids = S.weeklyProjects || [], head = ['Name', 'Login'];
+    for (var w = 1; w <= n; w++) head.push('W' + w + ' ' + lid2(2 * w - 1), 'W' + w + ' ' + lid2(2 * w));
+    head.push('Lessons average');
+    head = head.concat(pids);
+    var rows = [head].concat(S.weekly.map(function (r) {
+      var l = flatLessons(r), a = weekAvg(l);
+      return [r.name, r.login].concat(l.map(function (v) { return v == null ? '' : v; })).concat([a == null ? '' : a])
+        .concat(pids.map(function (id) { var g = (r.projects || {})[id]; return g == null ? '' : g; }));
+    }));
+    var csv = '﻿' + rows.map(function (r) { return r.map(function (v) { v = String(v); if (/^[=+\-@]/.test(v)) v = "'" + v; return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\n');
     var a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     a.download = 'weekly-grades-' + new Date().toISOString().slice(0, 10) + '.csv';
