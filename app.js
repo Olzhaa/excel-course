@@ -108,6 +108,7 @@
     if (isTeacher()) {
       h += '<div class="side-section">Teacher</div>';
       h += navItem('#/teacher', 'T1', 'Gradebook', '', active === 'teacher');
+      h += navItem('#/teacher/weekly', 'TW', 'Weekly grades', '', active === 'tweekly');
       h += navItem('#/teacher/projects', 'T2', 'Grade projects', '', active === 'tprojects');
       h += navItem('#/teacher/accounts', 'T3', 'Student accounts', '', active === 'taccounts');
     }
@@ -165,7 +166,7 @@
     if (google) renderGoogleButton();
   }
   function afterLogin(r) {
-    S.quizRun = null; S.quizDraft = {}; S.quizResult = {}; S.practiceResult = {}; S.quizReview = {};
+    S.quizRun = null; S.quizDraft = {}; S.quizResult = {}; S.practiceResult = {}; S.quizReview = {}; S.weekly = null;
     S.user = r.user; S.progress = r.progress || {}; S.settings = r.settings;
     store(CRED_KEY, S.creds);
     loadVariant().then(function () {
@@ -245,6 +246,9 @@
         '<div style="min-width:0"><h2 style="font-size:22px">' + esc(next.id) + ' · ' + esc(next.title) + '</h2><p class="muted" style="margin:4px 0 0">' + esc(next.summary) + '</p></div>' +
         '<a class="btn primary" href="#/lesson/' + next.id + '">Open lesson</a></div></section>';
     }
+    if (isTeacher()) {} else if (S.weekly && S.weekly[0]) {
+      h += '<section class="card"><h2 style="font-size:22px;margin-bottom:6px">My weekly grades</h2><p class="small muted" style="margin:0 0 10px">' + WEEKLY_RULE + '</p>' + weeklyTable(S.weekly, false) + '</section>';
+    } else if (!S.weekly) { loadWeekly().then(function () { if (/^#\/(home)?$/.test(location.hash || '#/home') || !location.hash) render(); }); }
     h += '<section class="card"><h2 style="font-size:22px;margin-bottom:12px">Course plan</h2><div class="week-grid">';
     var weeks = {};
     lessons().forEach(function (l) { (weeks[l.week] = weeks[l.week] || []).push(l); });
@@ -443,6 +447,7 @@
     var btn = form && form.querySelector('button[type=submit]'); if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
     run.sending = true;
     api('quiz', { lessonId: lid, answers: ans, away: run.away }).then(function (r) {
+      S.weekly = null;
       run.sending = false;
       if (!r.ok) {
         if (r.network) {
@@ -664,6 +669,46 @@
       return shell('T3', 'Student accounts', h, { active: 'taccounts', wide: true });
     });
   }
+  // ---------- weekly grades (0-100, computed on the server) ----------
+  function loadWeekly(force) {
+    if (S.weekly && !force) return Promise.resolve(S.weekly);
+    return api('weekly').then(function (r) { S.weekly = r.ok ? r.rows : []; return S.weekly; });
+  }
+  function gradeCls(v) { return v == null ? '' : v >= 80 ? 'c-good' : v >= 50 ? 'c-warn' : 'c-bad'; }
+  function weekAvg(ws) { var d = ws.filter(function (v) { return v != null; }); return d.length ? Math.round(d.reduce(function (a, b) { return a + b; }, 0) / d.length) : null; }
+  function weeklyTable(rows, withNames) {
+    var n = rows.length ? rows[0].weeks.length : 10, h = '<div class="gradebook-wrap" tabindex="0" role="region" aria-label="Weekly grades, scroll sideways"><table class="gradebook"><thead><tr>' + (withNames ? '<th class="name">Student</th>' : '');
+    for (var w = 1; w <= n; w++) h += '<th>W' + w + '</th>';
+    h += '<th>Average</th></tr></thead><tbody>';
+    rows.forEach(function (r) {
+      h += '<tr>' + (withNames ? '<td class="name"><a href="#/teacher/s/' + encodeURIComponent(r.login) + '">' + esc(r.name) + '</a></td>' : '');
+      r.weeks.forEach(function (v) { h += '<td class="num ' + gradeCls(v) + '">' + (v == null ? '<span class="muted">—</span>' : v) + '</td>'; });
+      var a = weekAvg(r.weeks);
+      h += '<td class="num ' + gradeCls(a) + '"><b>' + (a == null ? '—' : a) + '</b></td></tr>';
+    });
+    return h + '</tbody></table></div>';
+  }
+  var WEEKLY_RULE = 'Each week has 2 lessons. A lesson gives up to 100 points: 50 for practice tasks solved and 50 for the best quiz score. The week grade is the average of its 2 lessons. "—" means the week has not opened yet.';
+  function viewTeacherWeekly() {
+    if (!S.weekly) { loadWeekly().then(render); return shell('TW', 'Weekly grades', '<div class="loading">Loading…</div>', { active: 'tweekly' }); }
+    var h = '<section class="lesson-head"><div class="eyebrow">Teacher · ' + esc(S.course.group) + '</div><h1>Weekly grades</h1><p class="lead">0–100 for every week, based on the work each student has done.</p></section>' +
+      '<p class="small muted" style="margin:0">' + WEEKLY_RULE + ' The same table is saved in your Google Sheet, tab <b>Weekly grades</b>, every time you open the Gradebook.</p>' +
+      '<div class="row"><button class="btn" data-act="weeklyrefresh">Refresh</button><button class="btn" data-act="weeklycsv">Download CSV</button></div>' +
+      weeklyTable(S.weekly, true);
+    return shell('TW', 'Weekly grades', h, { active: 'tweekly' });
+  }
+  function weeklyCsv() {
+    var n = S.weekly.length ? S.weekly[0].weeks.length : 10, head = ['Name', 'Login'];
+    for (var w = 1; w <= n; w++) head.push('Week ' + w);
+    head.push('Average');
+    var rows = [head].concat(S.weekly.map(function (r) { var a = weekAvg(r.weeks); return [r.name, r.login].concat(r.weeks.map(function (v) { return v == null ? '' : v; })).concat([a == null ? '' : a]); }));
+    var csv = '\ufeff' + rows.map(function (r) { return r.map(function (v) { v = String(v); if (/^[=+\-@]/.test(v)) v = "'" + v; return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\n');
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = 'weekly-grades-' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
   function exportCsv() {
     var T = S.teacher;
     var head = ['Name', 'Login', 'Progress %', 'Quiz avg %', 'Practice solved'].concat(S.course.projects.map(function (p) { return p.id; }));
@@ -696,7 +741,7 @@
       case 'project': html = viewProject(parts[1]); break;
       case 'account': html = viewAccount(); break;
       case 'teacher':
-        html = parts[1] === 's' ? viewTeacherStudent(decodeURIComponent(parts[2] || '')) : parts[1] === 'projects' ? viewTeacherProjects() : parts[1] === 'accounts' ? viewTeacherAccounts() : viewTeacher();
+        html = parts[1] === 's' ? viewTeacherStudent(decodeURIComponent(parts[2] || '')) : parts[1] === 'projects' ? viewTeacherProjects() : parts[1] === 'weekly' ? viewTeacherWeekly() : parts[1] === 'accounts' ? viewTeacherAccounts() : viewTeacher();
         break;
       default: html = viewHome();
     }
@@ -738,6 +783,7 @@
         new FormData(f).forEach(function (v, k) { answers[k] = String(v).trim(); });
         var btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Checking…';
         api('practice', { taskId: tid, answers: answers }).then(function (r) {
+          S.weekly = null;
           if (!r.ok) { btn.disabled = false; btn.textContent = 'Check'; toast(r.error); return; }
           S.practiceResult[tid] = { results: r.results, score: r.score, max: r.max, answers: answers };
           var prev = S.progress[tid] || { score: 0, attempts: 0, detail: {} };
@@ -797,7 +843,7 @@
     if (t.dataset.go) { go(t.dataset.go); return; }
     var act = t.dataset.act;
     if (act === 'menu') { S.menuOpen = !S.menuOpen; document.querySelector('.side').classList.toggle('open', S.menuOpen); t.setAttribute('aria-expanded', String(S.menuOpen)); if (S.menuOpen) { var f = document.querySelector('.side a, .side button'); if (f) f.focus(); } }
-    if (act === 'logout') { store(CRED_KEY, null); S.user = null; S.creds = null; S.progress = {}; if (S.baseCourse) S.course = S.baseCourse; S.teacher = null; S.quizResult = {}; S.practiceResult = {}; S.quizRun = null; S.quizDraft = {}; S.quizReview = {}; document.querySelectorAll('.toast').forEach(function (x) { x.remove(); }); go('#/login'); }
+    if (act === 'logout') { store(CRED_KEY, null); S.user = null; S.creds = null; S.progress = {}; if (S.baseCourse) S.course = S.baseCourse; S.teacher = null; S.quizResult = {}; S.practiceResult = {}; S.quizRun = null; S.quizDraft = {}; S.quizReview = {}; S.weekly = null; document.querySelectorAll('.toast').forEach(function (x) { x.remove(); }); go('#/login'); }
     if (act === 'quizclose') {
       // Records the attempt whose time ran out, so the next lesson can open.
       t.disabled = true;
@@ -816,6 +862,8 @@
     }
     if (act === 'refresh') { loadTeacher(true).then(function () { toast('Updated'); render(); }); }
     if (act === 'csv') exportCsv();
+    if (act === 'weeklycsv') weeklyCsv();
+    if (act === 'weeklyrefresh') { loadWeekly(true).then(function () { toast('Updated'); render(); }); }
     if (act === 'resetpw') {
       if (t.dataset.confirm !== '1') { t.dataset.confirm = '1'; t.textContent = 'Click again to confirm'; return; }
       api('resetPassword', { student: t.dataset.student }).then(function (r) {
