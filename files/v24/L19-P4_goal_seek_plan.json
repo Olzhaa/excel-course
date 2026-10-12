@@ -1,0 +1,1 @@
+{"sheets":[{"name":"Plan","rows":[["Sales plan: school backpacks",null],["Price per backpack (KZT)",14000],["Cost per backpack (KZT)",8100],["Fixed costs per month (KZT)",1050000],["Units sold per month",240],["Profit (KZT)","=B5*(B2-B3)-B4"],[null,null],["Target profit (KZT)",1300000]],"colWidths":[30,14]}]}

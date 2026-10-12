@@ -1,0 +1,1 @@
+{"sheets":[{"name":"Budget","rows":[["Category","Amount (₸)"],["Rent (shared flat)",73000],["Food",50500],["Transport",10000],["Mobile & internet",9500],["Study materials",15500],["Entertainment",11000],["Total","=SUM(B2:B7)"]],"colWidths":[22,12]}]}

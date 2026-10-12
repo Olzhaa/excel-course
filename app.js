@@ -311,7 +311,9 @@
   }
 
   function practiceView(l) {
-    var h = '<p class="muted" style="margin:0">Download the starter file, do the steps in Excel or Google Sheets (File → Import → Upload), then type your answers below and press <b>Check</b>. You can check as many times as you need.</p>';
+    var web = l.practice.some(function (p) { return p.file && p.file.web; });
+    var h = web ? '<p class="muted" style="margin:0">Press <b>Open the sheet</b>: your data opens right here on the page. Do the steps in this sheet with formulas, then type your answers below and press <b>Check</b>. Your sheet is saved in this browser. Pasting from other apps is turned off, and your teacher sees how many formulas you wrote.</p>'
+      : '<p class="muted" style="margin:0">Download the starter file, do the steps in Excel or Google Sheets (File → Import → Upload), then type your answers below and press <b>Check</b>. You can check as many times as you need.</p>';
     l.practice.forEach(function (p, i) {
       var rec = S.progress[p.id];
       var solved = rec && rec.max && rec.score >= rec.max;
@@ -320,9 +322,12 @@
       h += '<section class="card task" id="task-' + p.id + '"><div class="task-head"><h3><span class="cellref">' + colLetter(i) + (i + 1) + '</span> ' + esc(p.title) + '</h3>' +
         '<div class="row"><span class="pill ' + (p.difficulty === 'easy' ? 'good' : p.difficulty === 'medium' ? 'warn' : 'bad') + '">' + esc(p.difficulty) + '</span>' +
         (solved ? '<span class="pill good">✓ Solved</span>' : rec ? '<span class="pill warn">' + rec.score + '/' + rec.max + ' correct</span>' : '') + '</div></div>' +
-        (p.file ? '<div>' + fileLink(p.file) + '</div>' : '') +
-        '<div class="prose">' + md(p.steps) + '</div>' +
-        '<form class="checks" data-task="' + p.id + '"><div class="eyebrow">Check your work</div>';
+        (p.file && p.file.web ? '' : p.file ? '<div>' + fileLink(p.file) + '</div>' : '') +
+        '<div class="prose">' + md(p.file && p.file.web ? p.steps.replace(/Open `[^`]+\.xlsx`\./g, 'Press **Open the sheet** below.') : p.steps) + '</div>' +
+        (p.file && p.file.web ? '<div class="websheet-slot" id="ws-slot-' + p.id + '">' + (p.file.note ? '<div class="small muted websheet-note">' + esc(p.file.note) + '</div>' : '') +
+          '<div class="row"><button class="btn primary" type="button" data-act="opensheet" data-task="' + p.id + '">Open the sheet</button>' +
+          '<button class="btn small" type="button" data-act="resetsheet" data-task="' + p.id + '">Start again</button></div></div>' : '') +
+        '<form class="checks" id="checks-' + p.id + '" data-task="' + p.id + '"><div class="eyebrow">Check your work</div>';
       p.checks.forEach(function (c) {
         var val = res.answers ? res.answers[c.id] : correct[c.id];
         var mark = res.results ? (res.results[c.id] ? '<span class="mark ok" role="img" aria-label="Correct" title="Correct">✓</span>' : '<span class="mark no" role="img" aria-label="Not correct yet" title="Not correct yet">✗</span>') : (correct[c.id] != null ? '<span class="mark ok">✓</span>' : '<span class="mark"></span>');
@@ -369,7 +374,7 @@
     }
     if (result) {
       h += '<section class="card"><div class="result-banner"><b class="num">' + result.score + ' / ' + result.max + '</b><div>' +
-        (result.late ? 'Time was over, so this attempt counts as 0.' : result.score === result.max ? 'Perfect score!' : result.attemptsLeft > 0 ? 'You have ' + result.attemptsLeft + ' attempt' + (result.attemptsLeft === 1 ? '' : 's') + ' left. Questions marked ✗ were wrong.' : 'No attempts left.') +
+        (result.late ? 'Time was over, so this attempt counts as 0.' : result.awayZero ? 'You left the quiz window too many times, so this attempt counts as 0.' : result.score === result.max ? 'Perfect score!' : result.attemptsLeft > 0 ? 'You have ' + result.attemptsLeft + ' attempt' + (result.attemptsLeft === 1 ? '' : 's') + ' left. Questions marked ✗ were wrong.' : 'No attempts left.') +
         '</div>' + (result.attemptsLeft > 0 && result.score < result.max ? '<button class="btn primary" data-act="quizstart" data-lesson="' + l.id + '">Try again</button>' : '') + '</div></section>';
       return h + quizQuestions(l, result.answers, result.results, result.reveal, true, result.order);
     }
@@ -397,7 +402,7 @@
     h += '<section class="card" style="display:grid;gap:10px"><h2 style="font-size:20px">Before you start</h2><ul style="margin:0;padding-left:20px">' +
       '<li>You have <b>' + minutes + ' minutes</b>. When the time is over, your answers are sent automatically.</li>' +
       '<li>Questions and answers are in a different order for every student.</li>' +
-      '<li>Stay on this page. Leaving it (other tabs or apps) is recorded and your teacher can see it.</li>' +
+      (maxAway() ? '<li><b>Stay on this page.</b> If you leave it (other tabs, apps or windows) more than <b>' + maxAway() + ' time' + (maxAway() === 1 ? '' : 's') + '</b>, this attempt gets <b>0 points</b>.</li>' : '<li>Stay on this page. Leaving it (other tabs or apps) is recorded and your teacher can see it.</li>') +
       '<li>Starting the quiz uses one attempt, even if you close the page.</li></ul>' +
       '<div><button class="btn primary" data-act="quizstart" data-lesson="' + l.id + '">Start quiz' + (attempts ? ' (attempt ' + (attempts + 1) + ' of ' + limit + ')' : '') + '</button></div></section>';
     return h;
@@ -463,7 +468,7 @@
         api('state').then(function (st) { if (st.ok) { S.progress = st.progress || {}; S.settings = st.settings; } render(); });
         return;
       }
-      S.quizResult[lid] = { score: r.score, max: r.max, results: r.results, reveal: r.reveal, attemptsLeft: r.attemptsLeft, answers: ans, order: run.order, late: r.late };
+      S.quizResult[lid] = { score: r.score, max: r.max, results: r.results, reveal: r.reveal, attemptsLeft: r.attemptsLeft, answers: ans, order: run.order, late: r.late, awayZero: r.awayZero };
       var prev = S.progress[lid + '-Q'] || { detail: {} };
       var d = Object.assign({}, prev.detail, { last: r.score, lastAnswers: ans }); delete d.startedAt;
       S.progress[lid + '-Q'] = { kind: 'quiz', score: r.best, max: r.max, attempts: r.attempts, detail: d };
@@ -545,6 +550,7 @@
       var aopts = ''; for (var a = 1; a <= 5; a++) aopts += '<option value="' + a + '"' + (Number(S.settings.quizAttempts) === a ? ' selected' : '') + '>' + a + '</option>';
       var mopts = ''; [5, 10, 15, 20, 30, 45].forEach(function (m) { mopts += '<option value="' + m + '"' + (Number(S.settings.quizMinutes || 15) === m ? ' selected' : '') + '>' + m + ' min</option>'; });
       var popts = ''; [0, 30, 40, 50, 60, 70, 80].forEach(function (m) { popts += '<option value="' + m + '"' + (Number(S.settings.passPercent == null ? 50 : S.settings.passPercent) === m ? ' selected' : '') + '>' + (m ? m + '%' : 'any score') + '</option>'; });
+      var wopts = ''; [[0, 'Off (only recorded)'], [1, '0 points after 2nd'], [2, '0 points after 3rd'], [3, '0 points after 4th'], [5, '0 points after 6th']].forEach(function (o) { wopts += '<option value="' + o[0] + '"' + (maxAway() === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
       var sopts = '<option value="0"' + (Number(S.settings.showAnswers) ? '' : ' selected') + '>No (safer)</option><option value="1"' + (Number(S.settings.showAnswers) ? ' selected' : '') + '>Yes, after last attempt</option>';
       var h = '<section class="lesson-head"><div class="eyebrow">Teacher · ' + esc(S.course.group) + ' · ' + T.students.length + ' students</div><h1>Gradebook</h1></section>' +
         '<section class="card row" style="justify-content:space-between">' +
@@ -552,7 +558,8 @@
         '<label class="field" for="set-att" style="min-width:110px">Quiz attempts<select id="set-att">' + aopts + '</select></label>' +
         '<label class="field" for="set-min" style="min-width:110px">Quiz time<select id="set-min">' + mopts + '</select></label>' +
         '<label class="field" for="set-pass" style="min-width:150px">Quiz score to go on<select id="set-pass">' + popts + '</select></label>' +
-        '<label class="field" for="set-show" style="min-width:190px">Show correct answers<select id="set-show">' + sopts + '</select></label></div>' +
+        '<label class="field" for="set-show" style="min-width:190px">Show correct answers<select id="set-show">' + sopts + '</select></label>' +
+        '<label class="field" for="set-away" style="min-width:190px">Leaving the quiz window<select id="set-away">' + wopts + '</select></label></div>' +
         '<div class="row"><button class="btn" data-act="refresh">Refresh</button><button class="btn" data-act="csv">Download CSV</button></div></section>';
       var subs = 0, waiting = 0;
       T.students.forEach(function (u) { S.course.projects.forEach(function (p) { var r = (T.prog[u.login] || {})[p.id]; if (r) { subs++; if (r.detail.grade === undefined || r.detail.grade === '') waiting++; } }); });
@@ -609,6 +616,20 @@
     });
     return out.join('; ');
   }
+  // Week 3+: what the student did in the web sheet. A solved task with no formulas there is worth a question.
+  function sheetWork(l, pr) {
+    var f = 0, pastes = 0, bad = [], web = false;
+    l.practice.forEach(function (p) {
+      if (!p.file || !p.file.web) return;
+      web = true;
+      var r = pr[p.id], w = r && r.detail && r.detail.work;
+      if (w) { f += w.formulas; pastes += w.pastes; }
+      if (r && r.max && r.score >= r.max && (!w || !w.formulas || (w.nums && w.found < w.nums))) bad.push(p.id.split('-')[1]);
+    });
+    if (!web) return '';
+    return '<div class="small' + (bad.length ? ' error' : ' muted') + '" title="Formulas written in the web sheet · blocked pastes from outside">' + f + ' formulas · ' + pastes + ' blocked pastes' +
+      (bad.length ? '<br>' + bad.join(', ') + ': answers not from own formulas' : '') + '</div>';
+  }
   function fmtDate(s) { if (!s) return '—'; var d = new Date(s); return isNaN(d) ? String(s).slice(0, 16) : d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 
   function viewTeacherStudent(login) {
@@ -628,7 +649,7 @@
         var st = lessonStats(l, pr);
         var log = st.quiz && st.quiz.detail && st.quiz.detail.log || [];
         var logHtml = log.map(function (e) { var bad = e.away >= 2 || (e.sec != null && e.sec < 90 && e.score > 0); return '<div class="small' + (bad ? ' error' : '') + '">' + e.score + ' · ' + fmtSec(e.sec) + ' · ' + (e.away == null ? '—' : e.away + '×') + (e.note ? ' · ' + esc(e.note) : '') + '</div>'; }).join('') || (st.quiz ? st.quiz.attempts : '—');
-        h += '<tr><td><span class="cellref">' + l.id + '</span> ' + esc(l.title) + '</td><td class="num">' + (st.quiz ? st.quiz.score + '/' + st.quiz.max : '—') + '</td><td class="num">' + logHtml + '</td><td class="num">' + st.solved + '/' + st.total + '</td><td>' +
+        h += '<tr><td><span class="cellref">' + l.id + '</span> ' + esc(l.title) + '</td><td class="num">' + (st.quiz ? st.quiz.score + '/' + st.quiz.max : '—') + '</td><td class="num">' + logHtml + '</td><td class="num">' + st.solved + '/' + st.total + sheetWork(l, pr) + '</td><td>' +
           (st.quiz && st.quiz.attempts ? '<button class="btn small" data-act="resetquiz" data-student="' + esc(login) + '" data-lesson="' + l.id + '">Give new attempts</button>' : '') + '</td></tr>';
       });
       h += '</tbody></table></div></section>';
@@ -669,6 +690,208 @@
       return shell('T3', 'Student accounts', h, { active: 'taccounts', wide: true });
     });
   }
+  // ---------- web sheet (week 3+): practice data opens inside the site, there is no file to download ----------
+  var UV = '0.25.1', UPRESETS = ['core', 'sort', 'filter', 'conditional-formatting', 'data-validation', 'find-replace'];
+  function loadUniver() {
+    if (S.univerP) return S.univerP;
+    var base = CONFIG.vendorBase || 'vendor/npm/';
+    UPRESETS.forEach(function (x) {
+      var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = base + '@univerjs/preset-sheets-' + x + '@' + UV + '/lib/index.css'; document.head.appendChild(l);
+    });
+    var js = ['react@18.3.1/umd/react.production.min.js', 'react-dom@18.3.1/umd/react-dom.production.min.js', 'rxjs@7.8.1/dist/bundles/rxjs.umd.min.js', '@univerjs/presets@' + UV + '/lib/umd/index.js'];
+    UPRESETS.forEach(function (x) { js.push('@univerjs/preset-sheets-' + x + '@' + UV + '/lib/umd/index.js', '@univerjs/preset-sheets-' + x + '@' + UV + '/lib/umd/locales/en-US.js'); });
+    S.univerP = js.reduce(function (p, src) {
+      return p.then(function () {
+        return new Promise(function (ok, fail) { var t = document.createElement('script'); t.src = base + src; t.onload = ok; t.onerror = function () { fail(new Error(src)); }; document.head.appendChild(t); });
+      });
+    }, Promise.resolve()).catch(function (e) { S.univerP = null; throw e; });
+    return S.univerP;
+  }
+  function presetName(x) { return x.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(''); }
+  // Same rules as write_xlsx in tools/build.py: "2025-03-01" is a date, "08:30" a time, "=..." a formula.
+  function wsCell(v) {
+    var CT = window.UniverCore && UniverCore.CellValueType || { STRING: 1, NUMBER: 2, BOOLEAN: 3, FORCE_STRING: 4 };
+    if (typeof v === 'number') return { v: v, t: CT.NUMBER };
+    if (typeof v === 'boolean') return { v: v ? 1 : 0, t: CT.BOOLEAN };
+    v = String(v);
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if (m) { var ms = Date.UTC(+m[1], +m[2] - 1, +m[3]); if (!isNaN(ms) && new Date(ms).getUTCDate() === +m[3]) return { v: (ms - Date.UTC(1899, 11, 30)) / 86400000, t: CT.NUMBER, s: 'd' }; }
+    m = /^(\d{1,2}):(\d{2})$/.exec(v);
+    if (m && +m[1] < 24 && +m[2] < 60) return { v: (+m[1] * 60 + +m[2]) / 1440, t: CT.NUMBER, s: 't' };
+    if (v.charAt(0) === '=') return { f: v };
+    return { v: v, t: /^\s*[-+]?[\d.,\s]+\s*$/.test(v) ? CT.FORCE_STRING : CT.STRING };
+  }
+  function specToWorkbook(spec, id) {
+    var order = [], sheets = {};
+    spec.sheets.forEach(function (sh, i) {
+      var sid = 's' + (i + 1), cd = {}, ncol = 0, head = sh.header !== false && sh.rows.length;
+      sh.rows.forEach(function (row, r) {
+        ncol = Math.max(ncol, row.length);
+        row.forEach(function (v, c) {
+          if (v == null || v === '') return;
+          var cell = wsCell(v);
+          if (r === 0 && head) cell.s = 'h';
+          (cd[r] = cd[r] || {})[c] = cell;
+        });
+      });
+      var cols = {};
+      for (var c = 0; c < ncol; c++) {
+        var w = sh.colWidths && sh.colWidths[c];
+        if (!w) { var lens = [6]; sh.rows.slice(0, 60).forEach(function (r) { if (r[c] != null) lens.push(String(r[c]).length); }); w = Math.min(Math.max.apply(null, lens) + 2, 40); }
+        cols[c] = { w: Math.round(w * 7.5 + 8) };
+      }
+      order.push(sid);
+      sheets[sid] = { id: sid, name: sh.name, rowCount: Math.max(200, sh.rows.length + 100), columnCount: Math.max(26, ncol + 6), cellData: cd, columnData: cols,
+        defaultRowHeight: 24, defaultColumnWidth: 88 };
+      if (head && sh.freeze !== false) sheets[sid].freeze = { xSplit: 0, ySplit: 1, startRow: 1, startColumn: 0 };
+    });
+    return { id: id, name: 'Practice', appVersion: '', locale: 'enUS', sheetOrder: order, sheets: sheets,
+      styles: { h: { bl: 1, bg: { rgb: '#E2F2E8' } }, d: { n: { pattern: 'dd.mm.yyyy' } }, t: { n: { pattern: 'hh:mm' } } } };
+  }
+  function wsKey(tid) { return 'xlws:' + S.user.login + ':' + tid; }
+  function wsLoad(tid) { try { return JSON.parse(localStorage.getItem(wsKey(tid)) || 'null'); } catch (e) { return null; } }
+  function wsStore(tid, rec) {
+    var ik = 'xlws-index:' + S.user.login, idx;
+    try { idx = JSON.parse(localStorage.getItem(ik) || '[]'); } catch (e) { idx = []; }
+    idx = idx.filter(function (x) { return x !== tid; }); idx.push(tid);
+    for (var tries = 0; tries < 12; tries++) {
+      try {
+        while (idx.length > 10) localStorage.removeItem('xlws:' + S.user.login + ':' + idx.shift());
+        localStorage.setItem(wsKey(tid), JSON.stringify(rec)); localStorage.setItem(ik, JSON.stringify(idx)); return;
+      } catch (e) {
+        if (idx.length <= 1) return;
+        localStorage.removeItem('xlws:' + S.user.login + ':' + idx.shift());
+      }
+    }
+  }
+  function wsSnapshot() {
+    if (!S.ws || !S.ws.api) return null;
+    try { var wb = S.ws.api.getActiveWorkbook(); return wb ? (wb.save ? wb.save() : wb.getSnapshot()) : null; } catch (e) { return null; }
+  }
+  function wsSave() {
+    var snap = wsSnapshot(); if (!snap) return;
+    wsStore(S.ws.task, { data: snap, pastes: S.ws.pastes, sec: Math.round(S.ws.sec), at: Date.now() });
+  }
+  function closeSheet() {
+    if (!S.ws) return;
+    var ws = S.ws;
+    wsSave();
+    clearInterval(ws.timer);
+    try { if (ws.univer) ws.univer.dispose(); } catch (e) {}
+    if (ws.host.parentNode) ws.host.parentNode.removeChild(ws.host);
+    S.ws = null;
+  }
+  function findTask(tid) {
+    var l = lessonById(tid.split('-')[0]);
+    return l && l.practice.filter(function (p) { return p.id === tid; })[0];
+  }
+  function openSheet(tid) {
+    var p = findTask(tid); if (!p || !p.file || !p.file.web) return;
+    closeSheet();
+    var host = document.createElement('div');
+    host.className = 'websheet';
+    host.innerHTML = '<div class="loading">Opening the sheet…</div>';
+    var ws = S.ws = { task: tid, host: host, pastes: 0, sec: 0 };
+    placeSheet();
+    Promise.all([loadUniver(), (window.WEB_FILES && WEB_FILES[p.file.url] ? Promise.resolve(JSON.parse(JSON.stringify(WEB_FILES[p.file.url]))) : fetch(p.file.url).then(function (r) { if (!r.ok) throw new Error('file'); return r.json(); }))]).then(function (res) {
+      if (S.ws !== ws) return;
+      var saved = wsLoad(tid);
+      ws.base = res[1];
+      ws.pastes = saved ? saved.pastes || 0 : 0;
+      ws.sec = saved ? saved.sec || 0 : 0;
+      host.innerHTML = '';
+      var inner = document.createElement('div'); inner.style.height = '100%'; host.appendChild(inner);
+      var EN = UniverCore.LocaleType.EN_US, locs = {}, presets = [];
+      locs[EN] = UniverCore.mergeLocales.apply(null, UPRESETS.map(function (x) { return window['UniverPresetSheets' + presetName(x) + 'EnUS']; }));
+      UPRESETS.forEach(function (x) {
+        var mod = window['UniverPresetSheets' + presetName(x)], fn = mod && mod['UniverSheets' + presetName(x) + 'Preset'];
+        if (fn) presets.push(x === 'core' ? fn({ container: inner }) : fn());
+      });
+      var u = UniverPresets.createUniver({ locale: EN, locales: locs, presets: presets });
+      ws.univer = u.univer; ws.api = u.univerAPI;
+      var data = saved && saved.data || specToWorkbook(res[1], 'wb-' + tid);
+      data.id = 'wb-' + tid;
+      u.univerAPI.createWorkbook(data);
+      ws.timer = setInterval(function () { if (!document.hidden) ws.sec += 5; wsSave(); }, 5000);
+    }).catch(function () {
+      if (S.ws !== ws) return;
+      host.innerHTML = '<div class="loading error">The sheet could not open. Check your internet and press <b>Open the sheet</b> again.</div>';
+      S.ws = null;
+    });
+  }
+  function placeSheet() {
+    if (!S.ws) return;
+    var slot = document.getElementById('ws-slot-' + S.ws.task);
+    if (!slot) { closeSheet(); return; }
+    if (S.ws.host.parentNode !== slot) slot.appendChild(S.ws.host);
+    var b = document.querySelector('[data-act="opensheet"][data-task="' + S.ws.task + '"]');
+    if (b) b.textContent = 'Close the sheet';
+  }
+  function resetSheet(tid) {
+    if (!confirm('Start this sheet again from the original data? Your changes in it will be deleted.')) return;
+    if (S.ws && S.ws.task === tid) { clearInterval(S.ws.timer); try { S.ws.univer.dispose(); } catch (e) {} if (S.ws.host.parentNode) S.ws.host.parentNode.removeChild(S.ws.host); S.ws = null; }
+    var old = wsLoad(tid);
+    // Pastes and time are kept: only the cells start again.
+    wsStore(tid, { data: null, pastes: old ? old.pastes || 0 : 0, sec: old ? old.sec || 0 : 0, at: Date.now() });
+    openSheet(tid);
+  }
+  // What the student did in the sheet, sent with Check so the teacher can see it.
+  function wsWork(tid, answers, p) {
+    var snap = S.ws && S.ws.task === tid ? wsSnapshot() : null, rec = wsLoad(tid);
+    if (!snap) snap = rec && rec.data;
+    var w = { formulas: 0, pastes: S.ws && S.ws.task === tid ? S.ws.pastes : rec ? rec.pastes || 0 : 0, found: 0, nums: 0, sec: S.ws && S.ws.task === tid ? S.ws.sec : rec ? rec.sec || 0 : 0 };
+    var base = {}, vals = [];
+    if (S.ws && S.ws.base) S.ws.base.sheets.forEach(function (sh, i) { sh.rows.forEach(function (row, r) { row.forEach(function (v, c) { if (typeof v === 'string' && v.charAt(0) === '=') base[(i + 1) + ':' + r + ':' + c] = 1; }); }); });
+    if (snap && snap.sheets) {
+      (snap.sheetOrder || Object.keys(snap.sheets)).forEach(function (sid, i) {
+        var cd = snap.sheets[sid] && snap.sheets[sid].cellData || {};
+        Object.keys(cd).forEach(function (r) { Object.keys(cd[r] || {}).forEach(function (c) {
+          var cell = cd[r][c];
+          if (cell && (cell.f || cell.si)) {
+            if (!base[(i + 1) + ':' + r + ':' + c]) w.formulas++;
+            var n = Number(cell.v); if (cell.v !== '' && cell.v != null && !isNaN(n)) vals.push(n);
+          }
+        }); });
+      });
+    }
+    p.checks.forEach(function (c) {
+      if (c.type !== 'number') return;
+      var a = parseFloat(String(answers[c.id] || '').replace(/\s/g, '').replace(',', '.').replace(/%$/, ''));
+      if (isNaN(a)) return;
+      w.nums++;
+      if (vals.some(function (v) { return Math.abs(v - a) <= 0.01 || Math.abs(v * 100 - a) <= 0.01; })) w.found++;
+    });
+    return w;
+  }
+  // Only copy and paste inside the web sheet is allowed; pasting from other apps or sites (AI chats) is blocked and counted.
+  document.addEventListener('paste', function (e) {
+    if (!S.ws || !(S.ws.host.contains(e.target) || S.ws.host.contains(document.activeElement))) return;
+    var html = e.clipboardData ? e.clipboardData.getData('text/html') : '';
+    if (/data-copy-id=/.test(html)) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    S.ws.pastes++;
+    toast('Pasting from outside this sheet is turned off. Type it yourself.');
+  }, true);
+  // The sheet's right-click "Paste" reads the clipboard directly: let only the sheet's own copies through.
+  (function () {
+    var cb = navigator.clipboard;
+    if (!cb || !cb.read) return;
+    var read = cb.read.bind(cb), readText = cb.readText ? cb.readText.bind(cb) : null;
+    function blocked() { if (S.ws) { S.ws.pastes++; toast('Pasting from outside this sheet is turned off. Type it yourself.'); } }
+    try {
+      cb.read = function () {
+        return read().then(function (items) {
+          if (!S.ws) return items;
+          var html = items.filter(function (i) { return i.types.indexOf('text/html') >= 0; })[0];
+          if (!html) { blocked(); return []; }
+          return html.getType('text/html').then(function (b) { return b.text(); }).then(function (t) { if (/data-copy-id=/.test(t)) return items; blocked(); return []; });
+        });
+      };
+      if (readText) cb.readText = function () { if (S.ws) { blocked(); return Promise.resolve(''); } return readText(); };
+    } catch (e) {}
+  })();
+  window.addEventListener('beforeunload', function () { if (S.ws) wsSave(); });
+
   // ---------- weekly grades (0-100, computed on the server) ----------
   function loadWeekly(force) {
     if (S.weekly && !force) return Promise.resolve(S.weekly);
@@ -766,6 +989,7 @@
     }
     if (html == null) return;
     app.innerHTML = html;
+    placeSheet();
     bindShell();
     var keep = S.scrollTo; S.scrollTo = null;
     if (keep) { var el = document.getElementById(keep); if (el) el.scrollIntoView({ block: 'start' }); }
@@ -801,15 +1025,17 @@
         var tid = f.getAttribute('data-task'), answers = {};
         new FormData(f).forEach(function (v, k) { answers[k] = String(v).trim(); });
         var btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Checking…';
-        api('practice', { taskId: tid, answers: answers }).then(function (r) {
+        var tp = findTask(tid), work = tp && tp.file && tp.file.web ? wsWork(tid, answers, tp) : null;
+        if (S.ws && S.ws.task === tid) wsSave();
+        api('practice', { taskId: tid, answers: answers, work: work }).then(function (r) {
           S.weekly = null;
           if (!r.ok) { btn.disabled = false; btn.textContent = 'Check'; toast(r.error); return; }
           S.practiceResult[tid] = { results: r.results, score: r.score, max: r.max, answers: answers };
           var prev = S.progress[tid] || { score: 0, attempts: 0, detail: {} };
           var correct = Object.assign({}, prev.detail.correct || {});
           Object.keys(r.results).forEach(function (k) { if (r.results[k]) correct[k] = answers[k]; });
-          S.progress[tid] = { kind: 'practice', score: Math.max(prev.score || 0, r.score, Object.keys(correct).length), max: r.max, attempts: (prev.attempts || 0) + 1, detail: { correct: correct } };
-          S.scrollTo = 'task-' + tid;
+          S.progress[tid] = { kind: 'practice', score: Math.max(prev.score || 0, r.score, Object.keys(correct).length), max: r.max, attempts: (prev.attempts || 0) + 1, detail: { correct: correct, work: work || prev.detail.work } };
+          S.scrollTo = tp && tp.file && tp.file.web ? 'checks-' + tid : 'task-' + tid;
           render();
         });
       });
@@ -846,7 +1072,7 @@
         });
       });
     });
-    var setKeys = { 'set-open': 'openLessons', 'set-att': 'quizAttempts', 'set-min': 'quizMinutes', 'set-pass': 'passPercent', 'set-show': 'showAnswers' };
+    var setKeys = { 'set-open': 'openLessons', 'set-att': 'quizAttempts', 'set-min': 'quizMinutes', 'set-pass': 'passPercent', 'set-show': 'showAnswers', 'set-away': 'maxAway' };
     Object.keys(setKeys).forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.addEventListener('change', function () {
@@ -882,6 +1108,8 @@
     if (act === 'refresh') { loadTeacher(true).then(function () { toast('Updated'); render(); }); }
     if (act === 'csv') exportCsv();
     if (act === 'weeklycsv') weeklyCsv();
+    if (act === 'opensheet') { if (S.ws && S.ws.task === t.dataset.task) { closeSheet(); t.textContent = 'Open the sheet'; } else openSheet(t.dataset.task); }
+    if (act === 'resetsheet') resetSheet(t.dataset.task);
     if (act === 'weeklyrefresh') { loadWeekly(true).then(function () { toast('Updated'); render(); }); }
     if (act === 'resetpw') {
       if (t.dataset.confirm !== '1') { t.dataset.confirm = '1'; t.textContent = 'Click again to confirm'; return; }
@@ -913,9 +1141,48 @@
       if (left <= 0 && !run.sending && !(run.retryAt && Date.now() < run.retryAt)) { if (activeRun() !== lid) location.hash = '#/lesson/' + lid + '/quiz'; setTimeout(function () { if (S.quizRun && S.quizRun[lid] && !S.quizRun[lid].sending) submitQuiz(lid, true); }, 50); }
     });
   }, 500);
-  function markAway() { var lid = activeRun(); if (lid && !S.quizRun[lid].sending) { S.quizRun[lid].away++; } }
-  document.addEventListener('visibilitychange', function () { if (document.hidden) markAway(); });
+  // Leaving the quiz window: warn when the student comes back; more than maxAway times = 0 (the server decides).
+  function maxAway() { return S.settings && S.settings.maxAway != null ? Number(S.settings.maxAway) : 3; }
+  function markAway() {
+    if (S.awayFlag || isTeacher()) return;
+    var lid = activeRun(); if (!lid || S.quizRun[lid].sending) return;
+    S.awayFlag = true;
+    var run = S.quizRun[lid];
+    run.away++;
+    api('quizAway', { lessonId: lid }).then(function (r) {
+      if (!r.ok) return;
+      if (r.away > run.away) run.away = r.away;
+      if (r.zeroed) {
+        delete S.quizRun[lid]; delete S.quizDraft[lid];
+        var l = lessonById(lid);
+        S.quizResult[lid] = { score: 0, max: r.max, results: l.quiz.map(function () { return false; }), attemptsLeft: r.attemptsLeft, answers: [], order: run.order, awayZero: true };
+        var prev = S.progress[lid + '-Q'] || { detail: {} };
+        S.progress[lid + '-Q'] = { kind: 'quiz', score: r.best, max: r.max, attempts: r.attempts, detail: { last: 0, lastAnswers: [], log: prev.detail.log } };
+        S.weekly = null;
+        S.awayMsg = { zero: true, n: r.away, max: r.maxAway };
+      } else if (r.running && r.maxAway) S.awayMsg = { n: r.away, max: r.maxAway };
+      if (!document.hidden) showAwayMsg();
+    });
+  }
+  function cameBack() { S.awayFlag = false; if (S.awayMsg) showAwayMsg(); }
+  function showAwayMsg() {
+    var m = S.awayMsg; S.awayMsg = null;
+    if (!m || document.getElementById('away-dlg')) return;
+    var d = document.createElement('div');
+    d.className = 'dlg-back'; d.id = 'away-dlg';
+    d.innerHTML = '<div class="dlg card" role="alertdialog" aria-modal="true" aria-labelledby="away-t" aria-describedby="away-d">' +
+      '<h2 id="away-t" style="font-size:22px">' + (m.zero ? 'Quiz stopped: 0 points' : 'Warning ' + m.n + ' of ' + m.max) + '</h2>' +
+      '<p id="away-d">' + (m.zero ? 'You left the quiz window ' + m.n + ' times. The limit is ' + m.max + ', so this attempt counts as 0. Your teacher can see this.'
+        : 'You left the quiz window. This is recorded. If you leave more than ' + m.max + ' time' + (m.max === 1 ? '' : 's') + ', this attempt gets 0 points.') + '</p>' +
+      '<div><button class="btn primary" type="button" id="away-ok">OK</button></div></div>';
+    document.body.appendChild(d);
+    var ok = document.getElementById('away-ok');
+    ok.focus();
+    ok.addEventListener('click', function () { d.remove(); S.awayFlag = false; if (m.zero) render(); });
+  }
+  document.addEventListener('visibilitychange', function () { if (document.hidden) markAway(); else cameBack(); });
   window.addEventListener('blur', function () { if (!document.hidden) markAway(); });
+  window.addEventListener('focus', function () { if (!document.hidden) cameBack(); });
 
   // ---------- boot ----------
   (window.COURSE_DATA ? Promise.resolve(window.COURSE_DATA) : fetch(CONFIG.courseUrl || 'data/course.json').then(function (r) { return r.json(); })).then(function (course) {
