@@ -332,11 +332,13 @@
         var val = res.answers ? res.answers[c.id] : correct[c.id];
         var mark = res.results ? (res.results[c.id] ? '<span class="mark ok" role="img" aria-label="Correct" title="Correct">✓</span>' : '<span class="mark no" role="img" aria-label="Not correct yet" title="Not correct yet">✗</span>') : (correct[c.id] != null ? '<span class="mark ok">✓</span>' : '<span class="mark"></span>');
         var fid = 'ck-' + p.id + '-' + c.id;
+        if (res.notOwn && res.notOwn.indexOf(c.id) >= 0) mark = '<span class="mark no" role="img" aria-label="Not counted" title="Not counted">✗</span>';
+        var own = res.notOwn && res.notOwn.indexOf(c.id) >= 0 ? '<div class="small own-msg">Not counted: this answer is not in your sheet. ' + (c.type === 'number' ? 'Get it with a formula in the sheet.' : 'Write it in the sheet first.') + '</div>' : '';
         if (c.type === 'choice') {
           h += '<div class="check"><label class="q" for="' + fid + '">' + esc(c.prompt) + '</label><div class="check-row"><select id="' + fid + '" name="' + c.id + '"><option value="">Choose…</option>' +
-            c.options.map(function (o, k) { return '<option value="' + k + '"' + (String(val) === String(k) ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>' + mark + '</div></div>';
+            c.options.map(function (o, k) { return '<option value="' + k + '"' + (String(val) === String(k) ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>' + mark + '</div>' + own + '</div>';
         } else {
-          h += '<div class="check"><label class="q" for="' + fid + '">' + esc(c.prompt) + '</label><div class="check-row"><input type="text" id="' + fid + '" name="' + c.id + '" value="' + esc(val == null ? '' : val) + '" autocomplete="off" spellcheck="false"' + (c.type === 'number' ? ' inputmode="decimal"' : '') + ' placeholder="' + (c.type === 'number' ? 'Type a number' : 'Type your answer') + '">' + mark + '</div></div>';
+          h += '<div class="check"><label class="q" for="' + fid + '">' + esc(c.prompt) + '</label><div class="check-row"><input type="text" id="' + fid + '" name="' + c.id + '" value="' + esc(val == null ? '' : val) + '" autocomplete="off" spellcheck="false"' + (c.type === 'number' ? ' inputmode="decimal"' : '') + ' placeholder="' + (c.type === 'number' ? 'Type a number' : 'Type your answer') + '">' + mark + '</div>' + own + '</div>';
         }
       });
       h += '<div class="row"><button class="btn primary" type="submit">Check</button>' +
@@ -367,6 +369,7 @@
     var h = '<section class="card result-banner">' +
       (rec && rec.attempts ? '<b class="num">' + pct(rec.score, rec.max) + '%</b><div><div>Best score: ' + rec.score + ' / ' + rec.max + '</div><div class="small muted">Attempts used: ' + attempts + ' of ' + limit + '</div></div>'
         : '<div><div><b style="font-size:20px">' + l.quiz.length + ' questions · ' + minutes + ' minutes</b></div><div class="small muted">You have ' + limit + ' attempts. Your best score counts.</div></div>') + '</section>';
+    if (run && qSeconds()) return quizStepView(l, run);
     if (run) {
       return '<div class="quiz-timer" id="quiz-timer" role="timer">⏱ <span id="quiz-left">' + fmtSec(run.deadline - Date.now() / 1000) + '</span> left</div>' +
         '<form id="quiz-form" class="no-copy" data-lesson="' + l.id + '">' + quizQuestions(l, S.quizDraft[l.id] || {}, null, null, false, run.order) +
@@ -402,6 +405,7 @@
     h += '<section class="card" style="display:grid;gap:10px"><h2 style="font-size:20px">Before you start</h2><ul style="margin:0;padding-left:20px">' +
       '<li>You have <b>' + minutes + ' minutes</b>. When the time is over, your answers are sent automatically.</li>' +
       '<li>Questions and answers are in a different order for every student.</li>' +
+      (qSeconds() ? '<li>You see <b>one question at a time</b> and have <b>' + qSeconds() + ' seconds</b> for each. You cannot go back.</li><li>The quiz opens in <b>full screen</b>. Leaving full screen counts as leaving the page.</li>' : '') +
       (maxAway() ? '<li><b>Stay on this page.</b> If you leave it (other tabs, apps or windows) more than <b>' + maxAway() + ' time' + (maxAway() === 1 ? '' : 's') + '</b>, this attempt gets <b>0 points</b>.</li>' : '<li>Stay on this page. Leaving it (other tabs or apps) is recorded and your teacher can see it.</li>') +
       '<li>Starting the quiz uses one attempt, even if you close the page.</li></ul>' +
       '<div><button class="btn primary" data-act="quizstart" data-lesson="' + l.id + '">Start quiz' + (attempts ? ' (attempt ' + (attempts + 1) + ' of ' + limit + ')' : '') + '</button></div></section>';
@@ -427,6 +431,85 @@
     });
     return h + '</div>';
   }
+  // ---------- quiz, one question at a time (settings.qSeconds per question, no going back) ----------
+  function qSeconds() { return S.settings && S.settings.qSeconds != null ? Number(S.settings.qSeconds) : 30; }
+  function stepKey(lid) { var rec = S.progress[lid + '-Q']; return 'xlq:' + S.user.login + ':' + lid + ':' + (rec && rec.detail && rec.detail.startedAt || ''); }
+  function stepState(lid) {
+    var run = S.quizRun[lid];
+    if (run.pos == null) {
+      var saved = store(stepKey(lid));
+      run.pos = saved ? saved.pos : 0;
+      run.qEnd = saved ? saved.qEnd : Date.now() + qSeconds() * 1000;
+    }
+    return run;
+  }
+  function saveStep(lid) { var run = S.quizRun[lid]; store(stepKey(lid), { pos: run.pos, qEnd: run.qEnd }); }
+  function quizStepView(l, run) {
+    stepState(l.id);
+    var n = l.quiz.length, i = run.order.q[run.pos], left = Math.max(0, Math.ceil((run.qEnd - Date.now()) / 1000));
+    if (run.pos >= n) return '<div class="loading">Sending your answers…</div>';
+    var h = '<div class="quiz-timer" id="quiz-timer" role="timer">Question ' + (run.pos + 1) + ' of ' + n + ' · <span id="q-left">' + left + '</span> s</div>' +
+      '<div class="qbar"><div id="q-bar" style="width:' + Math.round(100 * left / qSeconds()) + '%"></div></div>' +
+      '<form id="quiz-step" class="card no-copy q-card" data-lesson="' + l.id + '" style="display:grid;gap:12px">' +
+      '<div class="small muted">You cannot go back to a question. When the time is over, the next question opens.</div>' +
+      '<div class="qimg"><canvas data-paint="q" width="10" height="10"></canvas></div><div class="opts">';
+    run.order.o[i].forEach(function (k, j) {
+      h += '<label class="opt"><input type="radio" name="step" value="' + k + '" aria-label="Option ' + 'ABCD'.charAt(j) + '"><span class="optletter">' + 'ABCD'.charAt(j) + '</span><canvas data-paint="o" data-k="' + k + '" width="10" height="10"></canvas></label>';
+    });
+    h += '</div><div class="row"><button class="btn primary" type="submit">' + (run.pos === n - 1 ? 'Finish' : 'Next →') + '</button></div></form>';
+    return h;
+  }
+  function plainText(t) { return String(t).replace(/\*\*|`/g, ''); }
+  // Questions are drawn on a canvas, so the text cannot be selected or copied into an AI chat.
+  function paintText(cv, text, size, bold) {
+    var dpr = window.devicePixelRatio || 1, used = 0;
+    for (var sib = cv.parentNode.firstChild; sib; sib = sib.nextSibling) if (sib !== cv && sib.nodeType === 1) used += sib.offsetWidth + 14;
+    var pad = parseFloat(getComputedStyle(cv.parentNode).paddingLeft || 0) + parseFloat(getComputedStyle(cv.parentNode).paddingRight || 0);
+    var w = Math.max(160, cv.parentNode.clientWidth - pad - used - 6);
+    var ctx = cv.getContext('2d'), font = (bold ? '600 ' : '') + size + 'px "Source Sans 3", Arial, sans-serif';
+    ctx.font = font;
+    var words = plainText(text).split(/\s+/), lines = [], cur = '';
+    words.forEach(function (wd) { var t = cur ? cur + ' ' + wd : wd; if (ctx.measureText(t).width > w - 4 && cur) { lines.push(cur); cur = wd; } else cur = t; });
+    if (cur) lines.push(cur);
+    var lh = Math.round(size * 1.35), hgt = lines.length * lh + 6;
+    cv.width = w * dpr; cv.height = hgt * dpr; cv.style.width = w + 'px'; cv.style.height = hgt + 'px';
+    ctx = cv.getContext('2d'); ctx.scale(dpr, dpr); ctx.font = font; ctx.textBaseline = 'top';
+    ctx.fillStyle = getComputedStyle(cv).color || '#111';
+    lines.forEach(function (ln, k) { ctx.fillText(ln, 0, 3 + k * lh); });
+  }
+  function paintQuizStep() {
+    var f = document.getElementById('quiz-step'); if (!f) return;
+    var lid = f.getAttribute('data-lesson'), l = lessonById(lid), run = S.quizRun && S.quizRun[lid]; if (!run) return;
+    var q = l.quiz[run.order.q[run.pos]];
+    f.querySelectorAll('canvas[data-paint]').forEach(function (cv) {
+      if (cv.getAttribute('data-paint') === 'q') paintText(cv, q.q, 19, true);
+      else paintText(cv, q.options[Number(cv.getAttribute('data-k'))], 17, false);
+    });
+    var d = S.quizDraft[lid] && S.quizDraft[lid][run.order.q[run.pos]];
+    if (d != null) { var r = f.querySelector('input[value="' + d + '"]'); if (r) r.checked = true; }
+    f.addEventListener('change', function () {
+      var c = f.querySelector('input[name="step"]:checked'); if (!c) return;
+      S.quizDraft[lid] = S.quizDraft[lid] || {}; S.quizDraft[lid][run.order.q[run.pos]] = Number(c.value);
+    });
+    f.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    f.addEventListener('submit', function (e) { e.preventDefault(); nextStep(lid); });
+  }
+  function nextStep(lid) {
+    var run = S.quizRun && S.quizRun[lid]; if (!run || run.sending) return;
+    var n = lessonById(lid).quiz.length;
+    run.pos++;
+    run.qEnd = Date.now() + qSeconds() * 1000;
+    saveStep(lid);
+    if (run.pos >= n) { exitFull(); submitQuiz(lid, true); return; }
+    render(); window.scrollTo(0, 0);
+  }
+  // Full screen during the quiz: leaving it counts like leaving the window.
+  function enterFull() { var d = document.documentElement; try { if (d.requestFullscreen && !document.fullscreenElement) d.requestFullscreen().catch(function () {}); } catch (e) {} }
+  function exitFull() { try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {}); } catch (e) {} }
+  document.addEventListener('fullscreenchange', function () {
+    if (document.fullscreenElement || !activeRun()) return;
+    S.awayFlag = false; markAway(); S.awayFlag = false; S.awayFull = true;
+  });
   function quizOrder(l, attemptNo) {
     var rnd = seeded(S.user.login + '|' + l.id + '|' + attemptNo);
     return { q: shuffled(l.quiz.length, rnd), o: l.quiz.map(function (q) { return shuffled(q.options.length, rnd); }) };
@@ -472,6 +555,8 @@
       var prev = S.progress[lid + '-Q'] || { detail: {} };
       var d = Object.assign({}, prev.detail, { last: r.score, lastAnswers: ans }); delete d.startedAt;
       S.progress[lid + '-Q'] = { kind: 'quiz', score: r.best, max: r.max, attempts: r.attempts, detail: d };
+      try { localStorage.removeItem(stepKey(lid)); } catch (e) {}
+      exitFull();
       delete S.quizDraft[lid]; delete S.quizRun[lid];
       if (auto) toast('Time is over. Your answers were sent.');
       render(); window.scrollTo(0, 0);
@@ -551,6 +636,7 @@
       var mopts = ''; [5, 10, 15, 20, 30, 45].forEach(function (m) { mopts += '<option value="' + m + '"' + (Number(S.settings.quizMinutes || 15) === m ? ' selected' : '') + '>' + m + ' min</option>'; });
       var popts = ''; [0, 30, 40, 50, 60, 70, 80].forEach(function (m) { popts += '<option value="' + m + '"' + (Number(S.settings.passPercent == null ? 50 : S.settings.passPercent) === m ? ' selected' : '') + '>' + (m ? m + '%' : 'any score') + '</option>'; });
       var wopts = ''; [[0, 'Off (only recorded)'], [1, '0 points after 2nd'], [2, '0 points after 3rd'], [3, '0 points after 4th'], [5, '0 points after 6th']].forEach(function (o) { wopts += '<option value="' + o[0] + '"' + (maxAway() === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
+      var qopts = ''; [[0, 'Off (all at once)'], [20, '20 s'], [30, '30 s'], [45, '45 s'], [60, '60 s']].forEach(function (o) { qopts += '<option value="' + o[0] + '"' + (qSeconds() === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
       var sopts = '<option value="0"' + (Number(S.settings.showAnswers) ? '' : ' selected') + '>No (safer)</option><option value="1"' + (Number(S.settings.showAnswers) ? ' selected' : '') + '>Yes, after last attempt</option>';
       var h = '<section class="lesson-head"><div class="eyebrow">Teacher · ' + esc(S.course.group) + ' · ' + T.students.length + ' students</div><h1>Gradebook</h1></section>' +
         '<section class="card row" style="justify-content:space-between">' +
@@ -559,7 +645,8 @@
         '<label class="field" for="set-min" style="min-width:110px">Quiz time<select id="set-min">' + mopts + '</select></label>' +
         '<label class="field" for="set-pass" style="min-width:150px">Quiz score to go on<select id="set-pass">' + popts + '</select></label>' +
         '<label class="field" for="set-show" style="min-width:190px">Show correct answers<select id="set-show">' + sopts + '</select></label>' +
-        '<label class="field" for="set-away" style="min-width:190px">Leaving the quiz window<select id="set-away">' + wopts + '</select></label></div>' +
+        '<label class="field" for="set-away" style="min-width:190px">Leaving the quiz window<select id="set-away">' + wopts + '</select></label>' +
+        '<label class="field" for="set-qsec" style="min-width:150px">Time per question<select id="set-qsec">' + qopts + '</select></label></div>' +
         '<div class="row"><button class="btn" data-act="refresh">Refresh</button><button class="btn" data-act="csv">Download CSV</button></div></section>';
       var subs = 0, waiting = 0;
       T.students.forEach(function (u) { S.course.projects.forEach(function (p) { var r = (T.prog[u.login] || {})[p.id]; if (r) { subs++; if (r.detail.grade === undefined || r.detail.grade === '') waiting++; } }); });
@@ -618,17 +705,18 @@
   }
   // Week 3+: what the student did in the web sheet. A solved task with no formulas there is worth a question.
   function sheetWork(l, pr) {
-    var f = 0, pastes = 0, bad = [], web = false;
+    var f = 0, pastes = 0, bad = [], web = false, links = [];
     l.practice.forEach(function (p) {
       if (!p.file || !p.file.web) return;
       web = true;
       var r = pr[p.id], w = r && r.detail && r.detail.work;
       if (w) { f += w.formulas; pastes += w.pastes; }
+      if (w && w.history && w.history.length) { S.histData = S.histData || {}; S.histData[p.id] = w.history; links.push('<button class="linkbtn" type="button" data-act="hist" data-task="' + p.id + '">' + p.id.split('-')[1] + '</button>'); }
       if (r && r.max && r.score >= r.max && (!w || !w.formulas || (w.nums && w.found < w.nums))) bad.push(p.id.split('-')[1]);
     });
     if (!web) return '';
     return '<div class="small' + (bad.length ? ' error' : ' muted') + '" title="Formulas written in the web sheet · blocked pastes from outside">' + f + ' formulas · ' + pastes + ' blocked pastes' +
-      (bad.length ? '<br>' + bad.join(', ') + ': answers not from own formulas' : '') + '</div>';
+      (bad.length ? '<br>' + bad.join(', ') + ': answers not from own formulas' : '') + (links.length ? '<br>Formula history: ' + links.join(' ') : '') + '</div>';
   }
   function fmtDate(s) { if (!s) return '—'; var d = new Date(s); return isNaN(d) ? String(s).slice(0, 16) : d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 
@@ -768,9 +856,37 @@
     if (!S.ws || !S.ws.api) return null;
     try { var wb = S.ws.api.getActiveWorkbook(); return wb ? (wb.save ? wb.save() : wb.getSnapshot()) : null; } catch (e) { return null; }
   }
+  // Formula history: every 5 seconds the sheet is compared with the last look, and new formulas and typed values are logged.
+  function wsCells(snap) {
+    var m = {};
+    if (snap && snap.sheets) (snap.sheetOrder || Object.keys(snap.sheets)).forEach(function (sid) {
+      var sh = snap.sheets[sid]; if (!sh) return;
+      var cd = sh.cellData || {};
+      Object.keys(cd).forEach(function (r) { Object.keys(cd[r] || {}).forEach(function (c) {
+        var cell = cd[r][c]; if (!cell) return;
+        var x = cell.f ? cell.f : cell.si ? '(copied formula)' : cell.v == null ? '' : String(cell.v);
+        if (x !== '') m[sh.name + '!' + colLetter(+c) + (+r + 1)] = x;
+      }); });
+    });
+    return m;
+  }
+  function wsTrack(ws, snap) {
+    if (!snap) return;
+    var now = wsCells(snap), prev = ws.cells, ch = [];
+    ws.cells = now;
+    if (!prev) return;
+    Object.keys(now).forEach(function (k) { if (prev[k] !== now[k]) ch.push([k, now[k]]); });
+    Object.keys(prev).forEach(function (k) { if (!(k in now)) ch.push([k, '(cleared)']); });
+    if (!ch.length) return;
+    var t = Math.round(Date.now() / 1000);
+    if (ch.length > 12) ws.hist.push([t, ch[0][0].split('!')[0], ch.length + ' cells changed at once (fill, sort, delete or paste)']);
+    else ch.forEach(function (x) { ws.hist.push([t, x[0], String(x[1]).slice(0, 120)]); });
+    if (ws.hist.length > 150) ws.hist = ws.hist.slice(0, 20).concat(ws.hist.slice(-130));
+  }
   function wsSave() {
     var snap = wsSnapshot(); if (!snap) return;
-    wsStore(S.ws.task, { data: snap, pastes: S.ws.pastes, sec: Math.round(S.ws.sec), at: Date.now() });
+    wsTrack(S.ws, snap);
+    wsStore(S.ws.task, { data: snap, pastes: S.ws.pastes, sec: Math.round(S.ws.sec), at: Date.now(), hist: S.ws.hist });
   }
   function closeSheet() {
     if (!S.ws) return;
@@ -799,6 +915,7 @@
       ws.base = res[1];
       ws.pastes = saved ? saved.pastes || 0 : 0;
       ws.sec = saved ? saved.sec || 0 : 0;
+      ws.hist = saved && saved.hist || [];
       host.innerHTML = '';
       var inner = document.createElement('div'); inner.style.height = '100%'; host.appendChild(inner);
       var EN = UniverCore.LocaleType.EN_US, locs = {}, presets = [];
@@ -812,6 +929,7 @@
       var data = saved && saved.data || specToWorkbook(res[1], 'wb-' + tid);
       data.id = 'wb-' + tid;
       u.univerAPI.createWorkbook(data);
+      ws.cells = wsCells(data);
       ws.timer = setInterval(function () { if (!document.hidden) ws.sec += 5; wsSave(); }, 5000);
     }).catch(function () {
       if (S.ws !== ws) return;
@@ -832,14 +950,17 @@
     if (S.ws && S.ws.task === tid) { clearInterval(S.ws.timer); try { S.ws.univer.dispose(); } catch (e) {} if (S.ws.host.parentNode) S.ws.host.parentNode.removeChild(S.ws.host); S.ws = null; }
     var old = wsLoad(tid);
     // Pastes and time are kept: only the cells start again.
-    wsStore(tid, { data: null, pastes: old ? old.pastes || 0 : 0, sec: old ? old.sec || 0 : 0, at: Date.now() });
+    var h = old && old.hist || []; h.push([Math.round(Date.now() / 1000), '', 'Started the sheet again from the original data']);
+    wsStore(tid, { data: null, pastes: old ? old.pastes || 0 : 0, sec: old ? old.sec || 0 : 0, at: Date.now(), hist: h });
     openSheet(tid);
   }
   // What the student did in the sheet, sent with Check so the teacher can see it.
   function wsWork(tid, answers, p) {
     var snap = S.ws && S.ws.task === tid ? wsSnapshot() : null, rec = wsLoad(tid);
     if (!snap) snap = rec && rec.data;
-    var w = { formulas: 0, pastes: S.ws && S.ws.task === tid ? S.ws.pastes : rec ? rec.pastes || 0 : 0, found: 0, nums: 0, sec: S.ws && S.ws.task === tid ? S.ws.sec : rec ? rec.sec || 0 : 0 };
+    if (S.ws && S.ws.task === tid && snap) wsTrack(S.ws, snap);
+    var w = { formulas: 0, pastes: S.ws && S.ws.task === tid ? S.ws.pastes : rec ? rec.pastes || 0 : 0, found: 0, nums: 0, sec: S.ws && S.ws.task === tid ? S.ws.sec : rec ? rec.sec || 0 : 0,
+      history: (S.ws && S.ws.task === tid ? S.ws.hist : rec && rec.hist) || [] };
     var base = {}, vals = [];
     if (S.ws && S.ws.base) S.ws.base.sheets.forEach(function (sh, i) { sh.rows.forEach(function (row, r) { row.forEach(function (v, c) { if (typeof v === 'string' && v.charAt(0) === '=') base[(i + 1) + ':' + r + ':' + c] = 1; }); }); });
     if (snap && snap.sheets) {
@@ -862,6 +983,45 @@
       if (vals.some(function (v) { return Math.abs(v - a) <= 0.01 || Math.abs(v * 100 - a) <= 0.01; })) w.found++;
     });
     return w;
+  }
+  // An answer counts only when it comes from the student's own work in the web sheet:
+  // a number must be the value of a formula cell, a typed formula must be in a cell, a text must be in a cell.
+  // Checks about things a formula cannot show (colours, dropdowns, Find & Replace, Goal Seek…) are not checked.
+  var OWN_SKIP = /Rule|colou?r|green|top 10|dropdown|choices|invalid|break the|Find & Replace|before|WRONG|stored as text|data label|still show|after refreshing|slicer|Report \d|profit of 1 000 000|break-even|Source box|Rows to repeat|custom formula|Google Sheets|sparkline|after step/i;
+  function normF(f) { return String(f).replace(/\s|\$/g, '').toUpperCase(); }
+  function wsOwn(tid, answers, p) {
+    var snap = S.ws && S.ws.task === tid ? wsSnapshot() : null, rec = wsLoad(tid);
+    if (!snap) snap = rec && rec.data;
+    var nums = [], forms = {}, texts = {}, bad = [];
+    if (snap && snap.sheets) Object.keys(snap.sheets).forEach(function (sid) {
+      var cd = snap.sheets[sid] && snap.sheets[sid].cellData || {};
+      Object.keys(cd).forEach(function (r) { Object.keys(cd[r] || {}).forEach(function (c) {
+        var cell = cd[r][c]; if (!cell) return;
+        if (cell.f) forms[normF(cell.f)] = 1;
+        if (cell.v == null || cell.v === '') return;
+        texts[String(cell.v).trim().toLowerCase()] = 1;
+        var n = Number(cell.v); if ((cell.f || cell.si) && !isNaN(n)) nums.push(n);
+      }); });
+    });
+    p.checks.forEach(function (c) {
+      var a = String(answers[c.id] || '').trim();
+      if (!a || c.type === 'choice' || OWN_SKIP.test(c.prompt)) return;
+      var ok;
+      if (c.type === 'number') {
+        var t = a.replace(/\s/g, '').replace(',', '.').replace(/%$/, ''), x = parseFloat(t);
+        if (isNaN(x)) return;
+        var d = (t.split('.')[1] || '').length, tol = 0.5 * Math.pow(10, -d) + 1e-9;
+        ok = nums.some(function (v) { return Math.abs(v - x) <= tol || Math.abs(v * 100 - x) <= tol; });
+      } else if (a.charAt(0) === '=') {
+        ok = !!forms[normF(a.slice(1))] || !!forms[normF(a)];
+      } else {
+        ok = !!texts[a.toLowerCase()];
+        var m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(a);
+        if (!ok && m) { var ser = (Date.UTC(+m[3], +m[2] - 1, +m[1]) - Date.UTC(1899, 11, 30)) / 86400000; ok = nums.some(function (v) { return Math.floor(v) === ser; }); }
+      }
+      if (!ok) bad.push(c.id);
+    });
+    return bad;
   }
   // Only copy and paste inside the web sheet is allowed; pasting from other apps or sites (AI chats) is blocked and counted.
   document.addEventListener('paste', function (e) {
@@ -991,6 +1151,7 @@
     app.innerHTML = html;
     placeSheet();
     bindShell();
+    paintQuizStep();
     var keep = S.scrollTo; S.scrollTo = null;
     if (keep) { var el = document.getElementById(keep); if (el) el.scrollIntoView({ block: 'start' }); }
     else if (S.lastHash !== location.hash) window.scrollTo(0, 0);
@@ -1027,10 +1188,13 @@
         var btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Checking…';
         var tp = findTask(tid), work = tp && tp.file && tp.file.web ? wsWork(tid, answers, tp) : null;
         if (S.ws && S.ws.task === tid) wsSave();
-        api('practice', { taskId: tid, answers: answers, work: work }).then(function (r) {
+        var notOwn = work && !isTeacher() ? wsOwn(tid, answers, tp) : [], sent = Object.assign({}, answers);
+        notOwn.forEach(function (k) { sent[k] = ''; });
+        if (work) work.notOwn = notOwn.length;
+        api('practice', { taskId: tid, answers: sent, work: work }).then(function (r) {
           S.weekly = null;
           if (!r.ok) { btn.disabled = false; btn.textContent = 'Check'; toast(r.error); return; }
-          S.practiceResult[tid] = { results: r.results, score: r.score, max: r.max, answers: answers };
+          S.practiceResult[tid] = { results: r.results, score: r.score, max: r.max, answers: answers, notOwn: notOwn };
           var prev = S.progress[tid] || { score: 0, attempts: 0, detail: {} };
           var correct = Object.assign({}, prev.detail.correct || {});
           Object.keys(r.results).forEach(function (k) { if (r.results[k]) correct[k] = answers[k]; });
@@ -1072,7 +1236,7 @@
         });
       });
     });
-    var setKeys = { 'set-open': 'openLessons', 'set-att': 'quizAttempts', 'set-min': 'quizMinutes', 'set-pass': 'passPercent', 'set-show': 'showAnswers', 'set-away': 'maxAway' };
+    var setKeys = { 'set-open': 'openLessons', 'set-att': 'quizAttempts', 'set-min': 'quizMinutes', 'set-pass': 'passPercent', 'set-show': 'showAnswers', 'set-away': 'maxAway', 'set-qsec': 'qSeconds' };
     Object.keys(setKeys).forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.addEventListener('change', function () {
@@ -1087,8 +1251,9 @@
     if (!t) { if (S.menuOpen && !e.target.closest('.side')) { S.menuOpen = false; var s = document.querySelector('.side'); if (s) s.classList.remove('open'); } return; }
     if (t.dataset.go) { go(t.dataset.go); return; }
     var act = t.dataset.act;
+    if (act === 'hist') { showHistory(t.dataset.task); return; }
     if (act === 'menu') { S.menuOpen = !S.menuOpen; document.querySelector('.side').classList.toggle('open', S.menuOpen); t.setAttribute('aria-expanded', String(S.menuOpen)); if (S.menuOpen) { var f = document.querySelector('.side a, .side button'); if (f) f.focus(); } }
-    if (act === 'logout') { store(CRED_KEY, null); S.user = null; S.creds = null; S.progress = {}; if (S.baseCourse) S.course = S.baseCourse; S.teacher = null; S.quizResult = {}; S.practiceResult = {}; S.quizRun = null; S.quizDraft = {}; S.quizReview = {}; S.weekly = null; document.querySelectorAll('.toast').forEach(function (x) { x.remove(); }); go('#/login'); }
+    if (act === 'logout') { closeSheet(); store(CRED_KEY, null); S.user = null; S.creds = null; S.progress = {}; if (S.baseCourse) S.course = S.baseCourse; S.teacher = null; S.quizResult = {}; S.practiceResult = {}; S.quizRun = null; S.quizDraft = {}; S.quizReview = {}; S.weekly = null; document.querySelectorAll('.toast').forEach(function (x) { x.remove(); }); go('#/login'); }
     if (act === 'quizclose') {
       // Records the attempt whose time ran out, so the next lesson can open.
       t.disabled = true;
@@ -1096,7 +1261,7 @@
     }
     if (act === 'quizstart') {
       if (t.dataset.confirm !== '1') { t.dataset.confirm = '1'; t.textContent = 'The timer starts now. Click again to begin'; return; }
-      t.disabled = true; startQuiz(t.dataset.lesson);
+      t.disabled = true; if (!isTeacher()) enterFull(); startQuiz(t.dataset.lesson);
     }
     if (act === 'unlock') {
       if (t.disabled) return; t.disabled = true;
@@ -1135,6 +1300,12 @@
     if (!S.quizRun) return;
     Object.keys(S.quizRun).forEach(function (lid) {
       var run = S.quizRun[lid];
+      if (qSeconds() && run.qEnd && !run.sending && activeRun() === lid && !document.getElementById('away-dlg')) {
+        var ql = Math.max(0, Math.ceil((run.qEnd - Date.now()) / 1000)), qe = document.getElementById('q-left'), qb = document.getElementById('q-bar');
+        if (qe) qe.textContent = ql;
+        if (qb) qb.style.width = Math.round(100 * ql / qSeconds()) + '%';
+        if (ql <= 0) { nextStep(lid); return; }
+      }
       var left = run.deadline - Date.now() / 1000;
       var el = document.getElementById('quiz-left');
       if (el && activeRun() === lid) { el.textContent = fmtSec(left); document.getElementById('quiz-timer').classList.toggle('low', left < 60); }
@@ -1164,6 +1335,23 @@
       if (!document.hidden) showAwayMsg();
     });
   }
+  function showHistory(tid) {
+    var h = S.histData && S.histData[tid] || [], prevT = 0;
+    var rows = h.map(function (e) {
+      var d = new Date(e[0] * 1000), gap = prevT && e[0] - prevT > 600 ? '<tr><td colspan="3" class="small muted">· · · ' + Math.round((e[0] - prevT) / 60) + ' min later</td></tr>' : '';
+      prevT = e[0];
+      return gap + '<tr><td class="small">' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '</td><td><span class="cellref">' + esc(e[1]) + '</span></td><td><code>' + esc(e[2]) + '</code></td></tr>';
+    }).join('');
+    var d = document.createElement('div');
+    d.className = 'dlg-back';
+    d.innerHTML = '<div class="dlg card hist-dlg" role="dialog" aria-modal="true" aria-labelledby="hist-t"><h2 id="hist-t" style="font-size:20px">Formula history · ' + esc(tid) + '</h2>' +
+      '<p class="small muted">What the student typed in the web sheet, in order. Many cells at once usually means fill, sort or paste.</p>' +
+      '<div class="hist-scroll"><table class="table"><tr><th>Time</th><th>Cell</th><th>Formula or value</th></tr>' + (rows || '<tr><td colspan="3">No history yet.</td></tr>') + '</table></div>' +
+      '<div><button class="btn primary" type="button">Close</button></div></div>';
+    document.body.appendChild(d);
+    d.querySelector('button').addEventListener('click', function () { d.remove(); });
+    d.addEventListener('click', function (e) { if (e.target === d) d.remove(); });
+  }
   function cameBack() { S.awayFlag = false; if (S.awayMsg) showAwayMsg(); }
   function showAwayMsg() {
     var m = S.awayMsg; S.awayMsg = null;
@@ -1174,11 +1362,11 @@
       '<h2 id="away-t" style="font-size:22px">' + (m.zero ? 'Quiz stopped: 0 points' : 'Warning ' + m.n + ' of ' + m.max) + '</h2>' +
       '<p id="away-d">' + (m.zero ? 'You left the quiz window ' + m.n + ' times. The limit is ' + m.max + ', so this attempt counts as 0. Your teacher can see this.'
         : 'You left the quiz window. This is recorded. If you leave more than ' + m.max + ' time' + (m.max === 1 ? '' : 's') + ', this attempt gets 0 points.') + '</p>' +
-      '<div><button class="btn primary" type="button" id="away-ok">OK</button></div></div>';
+      '<div><button class="btn primary" type="button" id="away-ok">' + (!m.zero && document.fullscreenEnabled ? 'Back to full screen' : 'OK') + '</button></div></div>';
     document.body.appendChild(d);
     var ok = document.getElementById('away-ok');
     ok.focus();
-    ok.addEventListener('click', function () { d.remove(); S.awayFlag = false; if (m.zero) render(); });
+    ok.addEventListener('click', function () { d.remove(); S.awayFlag = false; if (m.zero) { exitFull(); render(); } else if (activeRun()) enterFull(); });
   }
   document.addEventListener('visibilitychange', function () { if (document.hidden) markAway(); else cameBack(); });
   window.addEventListener('blur', function () { if (!document.hidden) markAway(); });

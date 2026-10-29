@@ -277,3 +277,12 @@ table.gradebook a:hover { color: var(--accent); text-decoration: underline; }
 .websheet { height: min(72vh, 620px); min-height: 420px; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: #fff; position: relative; }
 .websheet > .loading { padding: 24px; }
 .websheet-note { font-size: 14px; }
+.qbar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: -4px 0 4px; }
+.qbar > div { height: 100%; background: var(--accent, #17703a); transition: width .4s linear; }
+.qimg canvas, .opt canvas { display: block; color: var(--ink); user-select: none; -webkit-user-select: none; }
+.opt .optletter { font-weight: 700; min-width: 18px; }
+.own-msg { color: var(--bad, #b42318); margin-top: 4px; }
+.hist-dlg { max-width: 760px; width: calc(100vw - 32px); }
+.hist-scroll { max-height: 60vh; overflow: auto; margin-bottom: 12px; }
+.hist-scroll code { white-space: pre-wrap; word-break: break-all; }
+.linkbtn { background: none; border: 0; padding: 0 2px; color: var(--accent, #1a7f4b); text-decoration: underline; cursor: pointer; font: inherit; }
