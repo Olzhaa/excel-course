@@ -712,7 +712,7 @@
       var r = pr[p.id], w = r && r.detail && r.detail.work;
       if (w) { f += w.formulas; pastes += w.pastes; }
       if (w && w.history && w.history.length) { S.histData = S.histData || {}; S.histData[p.id] = w.history; links.push('<button class="linkbtn" type="button" data-act="hist" data-task="' + p.id + '">' + p.id.split('-')[1] + '</button>'); }
-      if (r && r.max && r.score >= r.max && (!w || !w.formulas || (w.nums && w.found < w.nums))) bad.push(p.id.split('-')[1]);
+      if (r && r.max && r.score >= r.max && (!w || !w.formulas || (w.v === 2 && w.nums && w.found < w.nums))) bad.push(p.id.split('-')[1]);
     });
     if (!web) return '';
     return '<div class="small' + (bad.length ? ' error' : ' muted') + '" title="Formulas written in the web sheet · blocked pastes from outside">' + f + ' formulas · ' + pastes + ' blocked pastes' +
@@ -975,13 +975,16 @@
         }); });
       });
     }
+    // Same rule as wsOwn: checks a formula cannot answer are skipped, and a rounded answer matches.
     p.checks.forEach(function (c) {
-      if (c.type !== 'number') return;
-      var a = parseFloat(String(answers[c.id] || '').replace(/\s/g, '').replace(',', '.').replace(/%$/, ''));
+      if (c.type !== 'number' || OWN_SKIP.test(c.prompt)) return;
+      var t = String(answers[c.id] || '').replace(/\s/g, '').replace(',', '.').replace(/%$/, ''), a = parseFloat(t);
       if (isNaN(a)) return;
+      var tol = 0.5 * Math.pow(10, -(t.split('.')[1] || '').length) + 1e-9;
       w.nums++;
-      if (vals.some(function (v) { return Math.abs(v - a) <= 0.01 || Math.abs(v * 100 - a) <= 0.01; })) w.found++;
+      if (vals.some(function (v) { return Math.abs(v - a) <= tol || Math.abs(v * 100 - a) <= tol; })) w.found++;
     });
+    w.v = 2;
     return w;
   }
   // An answer counts only when it comes from the student's own work in the web sheet:
