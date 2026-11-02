@@ -51,17 +51,18 @@
   }
   function unlockedUpTo(progress) {
     progress = progress || S.progress;
-    var cap = Number(S.settings.openLessons), manual = progress.UNLOCK ? Number(progress.UNLOCK.score) || 0 : 0, n = 1;
+    var cap = Number(S.settings.openLessons), manual = progress.UNLOCK ? Number(progress.UNLOCK.score) || 0 : 0, n = Math.max(1, Math.min(cap, Number(S.settings.openFrom) || 1));
     while (n < cap && (lessonComplete(lessons()[n - 1], progress) || n + 1 <= manual)) n++;
     return Math.min(n, cap);
   }
-  function isOpen(lesson) { return isTeacher() || lesson.num <= unlockedUpTo(); }
+  function isOpen(lesson) { return isTeacher() || (lesson.num >= (Number(S.settings.openFrom) || 1) && lesson.num <= unlockedUpTo()); }
   function lockReason(lesson) {
+    if (lesson.num < (Number(S.settings.openFrom) || 1)) return 'Your teacher has closed this lesson.';
     if (lesson.num > Number(S.settings.openLessons)) return 'Your teacher has not opened this lesson yet.';
     var prev = lessons()[lesson.num - 2];
     return 'Finish lesson ' + prev.num + ' first: solve all its practice tasks and score at least ' + (S.settings.passPercent == null ? 50 : S.settings.passPercent) + '% in its quiz (or use all quiz attempts).';
   }
-  function projectOpen(p) { return isTeacher() || (Number(S.settings.openLessons) >= p.openAfter && lessonComplete(lessons()[p.openAfter - 1])); }
+  function projectOpen(p) { return isTeacher() || (Number(S.settings.openLessons) >= p.openAfter && (unlockedUpTo() > p.openAfter || lessonComplete(lessons()[p.openAfter - 1]))); }
   function lessonStats(lesson, progress) {
     progress = progress || S.progress;
     var q = progress[lesson.id + '-Q'];
@@ -356,6 +357,9 @@
   function shuffled(n, rnd) { var a = []; for (var i = 0; i < n; i++) a.push(i); for (var j = n - 1; j > 0; j--) { var k = Math.floor(rnd() * (j + 1)); var t = a[j]; a[j] = a[k]; a[k] = t; } return a; }
   function fmtSec(sec) { if (sec == null) return '—'; sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ':' + ('0' + sec % 60).slice(-2); }
 
+  // Quiz questions come from the server (quizStart), not from course.json: each attempt gets its own set.
+  function qlesson(l, items) { var o = Object.assign({}, l); o.quiz = items || []; return o; }
+  function itemsKey(lid, startedAt) { return 'xlqi:' + S.user.login + ':' + lid + ':' + (startedAt || ''); }
   function quizView(l) {
     var rec = S.progress[l.id + '-Q'];
     var limit = Number(S.settings.quizAttempts), minutes = Number(S.settings.quizMinutes || 15);
@@ -363,23 +367,31 @@
     var result = S.quizResult[l.id];
     if (rec && rec.detail && rec.detail.startedAt && !(S.quizRun && S.quizRun[l.id]) && !isTeacher()) {
       var dl = Date.parse(rec.detail.startedAt) / 1000 + Number(S.settings.quizMinutes || 15) * 60;
-      if (dl > Date.now() / 1000) { S.quizRun = S.quizRun || {}; S.quizRun[l.id] = { deadline: dl, order: quizOrder(l, attempts + 1), away: 0 }; }
+      if (dl > Date.now() / 1000) {
+        var its = store(itemsKey(l.id, rec.detail.startedAt));
+        S.quizRun = S.quizRun || {};
+        S.quizRun[l.id] = { deadline: dl, items: its || null, away: 0 };
+        if (its) S.quizRun[l.id].order = quizOrder(qlesson(l, its), attempts + 1);
+        else resumeQuiz(l.id);
+      }
     }
     var run = S.quizRun && S.quizRun[l.id];
+    if (run && !run.items) return '<div class="loading">Loading the quiz…</div>';
+    var L = run ? qlesson(l, run.items) : l;
     var h = '<section class="card result-banner">' +
       (rec && rec.attempts ? '<b class="num">' + pct(rec.score, rec.max) + '%</b><div><div>Best score: ' + rec.score + ' / ' + rec.max + '</div><div class="small muted">Attempts used: ' + attempts + ' of ' + limit + '</div></div>'
-        : '<div><div><b style="font-size:20px">' + l.quiz.length + ' questions · ' + minutes + ' minutes</b></div><div class="small muted">You have ' + limit + ' attempts. Your best score counts.</div></div>') + '</section>';
-    if (run && qSeconds()) return quizStepView(l, run);
+        : '<div><div><b style="font-size:20px">' + (l.quizN || 10) + ' questions · ' + minutes + ' minutes</b></div><div class="small muted">You have ' + limit + ' attempts. Your best score counts.</div></div>') + '</section>';
+    if (run && qSeconds()) return quizStepView(L, run);
     if (run) {
       return '<div class="quiz-timer" id="quiz-timer" role="timer">⏱ <span id="quiz-left">' + fmtSec(run.deadline - Date.now() / 1000) + '</span> left</div>' +
-        '<form id="quiz-form" class="no-copy" data-lesson="' + l.id + '">' + quizQuestions(l, S.quizDraft[l.id] || {}, null, null, false, run.order) +
+        '<form id="quiz-form" class="no-copy" data-lesson="' + l.id + '">' + quizQuestions(L, S.quizDraft[l.id] || {}, null, null, false, run.order) +
         '<div class="row" style="margin-top:16px"><button class="btn primary" type="submit">Submit answers</button><span class="small muted" id="quiz-msg" role="status"></span></div></form>';
     }
     if (result) {
       h += '<section class="card"><div class="result-banner"><b class="num">' + result.score + ' / ' + result.max + '</b><div>' +
         (result.late ? 'Time was over, so this attempt counts as 0.' : result.awayZero ? 'You left the quiz window too many times, so this attempt counts as 0.' : result.score === result.max ? 'Perfect score!' : result.attemptsLeft > 0 ? 'You have ' + result.attemptsLeft + ' attempt' + (result.attemptsLeft === 1 ? '' : 's') + ' left. Questions marked ✗ were wrong.' : 'No attempts left.') +
         '</div>' + (result.attemptsLeft > 0 && result.score < result.max ? '<button class="btn primary" data-act="quizstart" data-lesson="' + l.id + '">Try again</button>' : '') + '</div></section>';
-      return h + quizQuestions(l, result.answers, result.results, result.reveal, true, result.order);
+      return h + quizQuestions(qlesson(l, result.items), result.answers, result.results, result.reveal, true, result.order);
     }
     var finished = rec && (attempts >= limit || (rec.detail && rec.detail.last === rec.max && rec.attempts > 0));
     var expired = rec && rec.detail && rec.detail.startedAt && !run && !isTeacher();
@@ -394,10 +406,10 @@
           S.quizReview[l.id] = 'loading';
           api('quizReview', { lessonId: l.id }).then(function (r) { S.quizReview[l.id] = r.ok && r.reveal ? r.reveal : 'none'; render(); });
         }
-        if (rv && rv !== 'loading' && rv !== 'none') {
-          var last = rec.detail && rec.detail.lastAnswers || {};
-          var res = l.quiz.map(function (_, i) { return String(last[i]) === String(rv.answers[i]); });
-          return h + '<div class="card muted">This quiz is finished. Here are your last answers and the correct ones.</div>' + quizQuestions(l, last, res, rv, true, quizOrder(l, attempts));
+        if (rv && rv !== 'loading' && rv !== 'none' && rv.items) {
+          var last = rec.detail && rec.detail.lastAnswers || {}, RL = qlesson(l, rv.items);
+          var res = rv.items.map(function (_, i) { return String(last[i]) === String(rv.answers[i]); });
+          return h + '<div class="card muted">This quiz is finished. Here are your last answers and the correct ones.</div>' + quizQuestions(RL, last, res, rv, true, quizOrder(RL, attempts));
         }
       }
       return h + '<div class="card muted">This quiz is finished.' + (Number(S.settings.showAnswers) ? '' : ' Correct answers are not shown, so that classmates cannot copy them. Ask your teacher if you want to discuss a question.') + '</div>';
@@ -480,7 +492,7 @@
   function paintQuizStep() {
     var f = document.getElementById('quiz-step'); if (!f) return;
     var lid = f.getAttribute('data-lesson'), l = lessonById(lid), run = S.quizRun && S.quizRun[lid]; if (!run) return;
-    var q = l.quiz[run.order.q[run.pos]];
+    var q = run.items[run.order.q[run.pos]];
     f.querySelectorAll('canvas[data-paint]').forEach(function (cv) {
       if (cv.getAttribute('data-paint') === 'q') paintText(cv, q.q, 19, true);
       else paintText(cv, q.options[Number(cv.getAttribute('data-k'))], 17, false);
@@ -496,7 +508,7 @@
   }
   function nextStep(lid) {
     var run = S.quizRun && S.quizRun[lid]; if (!run || run.sending) return;
-    var n = lessonById(lid).quiz.length;
+    var n = run.items.length;
     run.pos++;
     run.qEnd = Date.now() + qSeconds() * 1000;
     saveStep(lid);
@@ -516,22 +528,38 @@
   }
   function startQuiz(lid) {
     var l = lessonById(lid);
-    api('quizStart', { lessonId: lid }).then(function (r) {
+    api('quizStart', { lessonId: lid, qv: 2 }).then(function (r) {
       if (!r.ok) { if (r.progress) S.progress = r.progress; toast(r.error); render(); return; }
       var skew = Date.now() / 1000 - Date.parse(r.now) / 1000;
-      var rec = S.progress[lid + '-Q'] || { score: 0, max: l.quiz.length, attempts: 0, detail: {} };
+      var rec = S.progress[lid + '-Q'] || { score: 0, max: l.quizN || 10, attempts: 0, detail: {} };
       rec.attempts = r.attempts != null ? r.attempts : rec.attempts;
       rec.detail = Object.assign({}, rec.detail, { startedAt: r.startedAt });
       S.progress[lid + '-Q'] = rec;
       S.quizRun = S.quizRun || {};
-      S.quizRun[lid] = { deadline: Date.parse(r.startedAt) / 1000 + skew + r.minutes * 60, order: quizOrder(l, rec.attempts + 1), away: 0 };
+      var items = r.items || [];
+      store(itemsKey(lid, r.startedAt), items);
+      S.quizRun[lid] = { deadline: Date.parse(r.startedAt) / 1000 + skew + r.minutes * 60, items: items, order: quizOrder(qlesson(l, items), rec.attempts + 1), away: 0 };
       delete S.quizResult[lid];
       render(); window.scrollTo(0, 0);
     });
   }
+  // After a reload the questions are fetched again for the running attempt (the server does not use a new attempt).
+  function resumeQuiz(lid) {
+    var l = lessonById(lid);
+    api('quizStart', { lessonId: lid, qv: 2 }).then(function (r) {
+      var run = S.quizRun && S.quizRun[lid]; if (!run) return;
+      if (!r.ok || !r.items) { delete S.quizRun[lid]; if (r.progress) S.progress = r.progress; if (!r.ok) toast(r.error); render(); return; }
+      var rec = S.progress[lid + '-Q'] || { attempts: 0, detail: {} };
+      if (r.startedAt && r.startedAt !== (rec.detail && rec.detail.startedAt)) { rec.detail = Object.assign({}, rec.detail, { startedAt: r.startedAt }); S.progress[lid + '-Q'] = rec; }
+      if (r.attempts != null) rec.attempts = r.attempts;
+      store(itemsKey(lid, r.startedAt), r.items);
+      run.items = r.items; run.order = quizOrder(qlesson(l, r.items), (rec.attempts || 0) + 1);
+      render();
+    });
+  }
   function submitQuiz(lid, auto) {
     var l = lessonById(lid), run = S.quizRun[lid], form = document.getElementById('quiz-form'), ans = [];
-    l.quiz.forEach(function (q, i) { var el = form && form.querySelector('input[name="q' + i + '"]:checked'); ans.push(el ? Number(el.value) : (S.quizDraft[lid] && S.quizDraft[lid][i] != null ? Number(S.quizDraft[lid][i]) : null)); });
+    (run.items || []).forEach(function (q, i) { var el = form && form.querySelector('input[name="q' + i + '"]:checked'); ans.push(el ? Number(el.value) : (S.quizDraft[lid] && S.quizDraft[lid][i] != null ? Number(S.quizDraft[lid][i]) : null)); });
     var btn = form && form.querySelector('button[type=submit]'); if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
     run.sending = true;
     api('quiz', { lessonId: lid, answers: ans, away: run.away }).then(function (r) {
@@ -551,11 +579,11 @@
         api('state').then(function (st) { if (st.ok) { S.progress = st.progress || {}; S.settings = st.settings; } render(); });
         return;
       }
-      S.quizResult[lid] = { score: r.score, max: r.max, results: r.results, reveal: r.reveal, attemptsLeft: r.attemptsLeft, answers: ans, order: run.order, late: r.late, awayZero: r.awayZero };
+      S.quizResult[lid] = { score: r.score, max: r.max, results: r.results, reveal: r.reveal, attemptsLeft: r.attemptsLeft, answers: ans, order: run.order, items: run.items, late: r.late, awayZero: r.awayZero };
       var prev = S.progress[lid + '-Q'] || { detail: {} };
       var d = Object.assign({}, prev.detail, { last: r.score, lastAnswers: ans }); delete d.startedAt;
       S.progress[lid + '-Q'] = { kind: 'quiz', score: r.best, max: r.max, attempts: r.attempts, detail: d };
-      try { localStorage.removeItem(stepKey(lid)); } catch (e) {}
+      try { localStorage.removeItem(stepKey(lid)); localStorage.removeItem(itemsKey(lid, prev.detail && prev.detail.startedAt)); } catch (e) {}
       exitFull();
       delete S.quizDraft[lid]; delete S.quizRun[lid];
       if (auto) toast('Time is over. Your answers were sent.');
@@ -631,7 +659,8 @@
 
   function viewTeacher() {
     return teacherView(function (T) {
-      var opts = ''; for (var i = 0; i <= lessons().length; i++) opts += '<option value="' + i + '"' + (Number(S.settings.openLessons) === i ? ' selected' : '') + '>' + (i === 0 ? 'None' : 'Lessons 1–' + i) + '</option>';
+      var opts = ''; for (var i = 0; i <= lessons().length; i++) opts += '<option value="' + i + '"' + (Number(S.settings.openLessons) === i ? ' selected' : '') + '>' + (i === 0 ? 'None' : 'Lesson ' + i) + '</option>';
+      var fopts = ''; for (var fi = 1; fi <= lessons().length; fi++) fopts += '<option value="' + fi + '"' + ((Number(S.settings.openFrom) || 1) === fi ? ' selected' : '') + '>Lesson ' + fi + '</option>';
       var aopts = ''; for (var a = 1; a <= 5; a++) aopts += '<option value="' + a + '"' + (Number(S.settings.quizAttempts) === a ? ' selected' : '') + '>' + a + '</option>';
       var mopts = ''; [5, 10, 15, 20, 30, 45].forEach(function (m) { mopts += '<option value="' + m + '"' + (Number(S.settings.quizMinutes || 15) === m ? ' selected' : '') + '>' + m + ' min</option>'; });
       var popts = ''; [0, 30, 40, 50, 60, 70, 80].forEach(function (m) { popts += '<option value="' + m + '"' + (Number(S.settings.passPercent == null ? 50 : S.settings.passPercent) === m ? ' selected' : '') + '>' + (m ? m + '%' : 'any score') + '</option>'; });
@@ -640,7 +669,8 @@
       var sopts = '<option value="0"' + (Number(S.settings.showAnswers) ? '' : ' selected') + '>No (safer)</option><option value="1"' + (Number(S.settings.showAnswers) ? ' selected' : '') + '>Yes, after last attempt</option>';
       var h = '<section class="lesson-head"><div class="eyebrow">Teacher · ' + esc(S.course.group) + ' · ' + T.students.length + ' students</div><h1>Gradebook</h1></section>' +
         '<section class="card row" style="justify-content:space-between">' +
-        '<div class="row"><label class="field" for="set-open" style="min-width:170px">Lessons available<select id="set-open">' + opts + '</select></label>' +
+        '<div class="row"><label class="field" for="set-from" style="min-width:150px">Lessons open from<select id="set-from">' + fopts + '</select></label>' +
+        '<label class="field" for="set-open" style="min-width:150px">to<select id="set-open">' + opts + '</select></label>' +
         '<label class="field" for="set-att" style="min-width:110px">Quiz attempts<select id="set-att">' + aopts + '</select></label>' +
         '<label class="field" for="set-min" style="min-width:110px">Quiz time<select id="set-min">' + mopts + '</select></label>' +
         '<label class="field" for="set-pass" style="min-width:150px">Quiz score to go on<select id="set-pass">' + popts + '</select></label>' +
@@ -664,7 +694,7 @@
           (idle.length ? '<div><span class="small muted">Logged in but never pressed Check (' + idle.length + '):</span> ' + who(idle) + '</div>' : '') +
           (never.length ? '<div><span class="small muted">Never logged in (' + never.length + '):</span> ' + who(never) + '</div>' : '') + '</section>';
       }
-      h += '<p class="small muted" style="margin:0">Each student moves to the next lesson only after finishing the previous one (all practice tasks + quiz). "Lessons available" is the furthest anyone can go.</p>';
+      h += '<p class="small muted" style="margin:0">Students see only lessons from "from" to "to". The "from" lesson is open for everyone; after it, each student moves to the next lesson only after finishing the previous one (all practice tasks + quiz). Lessons before "from" are closed.</p>';
       h += '<div class="legend"><span><span class="pill good">80%+</span></span><span><span class="pill warn">50–79%</span></span><span><span class="pill bad">below 50%</span></span><span>Q = best quiz score, P = practice tasks solved, ⚠ = quiz done very fast or left the page 2+ times</span></div>';
       h += '<div class="gradebook-wrap" tabindex="0" role="region" aria-label="Gradebook table, scroll sideways"><table class="gradebook"><thead><tr><th class="name" rowspan="2">Student</th><th rowspan="2">Now on</th><th rowspan="2">Progress</th><th rowspan="2">Quiz avg</th>';
       S.course.projects.forEach(function (p) { h += '<th rowspan="2">' + p.id + '</th>'; });
@@ -704,14 +734,15 @@
     return out.join('; ');
   }
   // Week 3+: what the student did in the web sheet. A solved task with no formulas there is worth a question.
-  function sheetWork(l, pr) {
+  function sheetWork(l, pr, login) {
     var f = 0, pastes = 0, bad = [], web = false, links = [];
     l.practice.forEach(function (p) {
       if (!p.file || !p.file.web) return;
       web = true;
       var r = pr[p.id], w = r && r.detail && r.detail.work;
       if (w) { f += w.formulas; pastes += w.pastes; }
-      if (w && w.history && w.history.length) { S.histData = S.histData || {}; S.histData[p.id] = w.history; links.push('<button class="linkbtn" type="button" data-act="hist" data-task="' + p.id + '">' + p.id.split('-')[1] + '</button>'); }
+      // The history itself is loaded from the server only when the teacher opens it (w.hn = how many entries).
+      if (w && (w.hn || w.history && w.history.length)) links.push('<button class="linkbtn" type="button" data-act="hist" data-student="' + esc(login || '') + '" data-task="' + p.id + '">' + p.id.split('-')[1] + '</button>');
       if (r && r.max && r.score >= r.max && (!w || !w.formulas || (w.v === 2 && w.nums && w.found < w.nums))) bad.push(p.id.split('-')[1]);
     });
     if (!web) return '';
@@ -737,7 +768,7 @@
         var st = lessonStats(l, pr);
         var log = st.quiz && st.quiz.detail && st.quiz.detail.log || [];
         var logHtml = log.map(function (e) { var bad = e.away >= 2 || (e.sec != null && e.sec < 90 && e.score > 0); return '<div class="small' + (bad ? ' error' : '') + '">' + e.score + ' · ' + fmtSec(e.sec) + ' · ' + (e.away == null ? '—' : e.away + '×') + (e.note ? ' · ' + esc(e.note) : '') + '</div>'; }).join('') || (st.quiz ? st.quiz.attempts : '—');
-        h += '<tr><td><span class="cellref">' + l.id + '</span> ' + esc(l.title) + '</td><td class="num">' + (st.quiz ? st.quiz.score + '/' + st.quiz.max : '—') + '</td><td class="num">' + logHtml + '</td><td class="num">' + st.solved + '/' + st.total + sheetWork(l, pr) + '</td><td>' +
+        h += '<tr><td><span class="cellref">' + l.id + '</span> ' + esc(l.title) + '</td><td class="num">' + (st.quiz ? st.quiz.score + '/' + st.quiz.max : '—') + '</td><td class="num">' + logHtml + '</td><td class="num">' + st.solved + '/' + st.total + sheetWork(l, pr, login) + '</td><td>' +
           (st.quiz && st.quiz.attempts ? '<button class="btn small" data-act="resetquiz" data-student="' + esc(login) + '" data-lesson="' + l.id + '">Give new attempts</button>' : '') + '</td></tr>';
       });
       h += '</tbody></table></div></section>';
@@ -965,12 +996,12 @@
     if (S.ws && S.ws.base) S.ws.base.sheets.forEach(function (sh, i) { sh.rows.forEach(function (row, r) { row.forEach(function (v, c) { if (typeof v === 'string' && v.charAt(0) === '=') base[(i + 1) + ':' + r + ':' + c] = 1; }); }); });
     if (snap && snap.sheets) {
       (snap.sheetOrder || Object.keys(snap.sheets)).forEach(function (sid, i) {
-        var cd = snap.sheets[sid] && snap.sheets[sid].cellData || {};
+        var cd = snap.sheets[sid] && snap.sheets[sid].cellData || {}, live = refCells(cd);
         Object.keys(cd).forEach(function (r) { Object.keys(cd[r] || {}).forEach(function (c) {
           var cell = cd[r][c];
           if (cell && (cell.f || cell.si)) {
             if (!base[(i + 1) + ':' + r + ':' + c]) w.formulas++;
-            var n = Number(cell.v); if (cell.v !== '' && cell.v != null && !isNaN(n)) vals.push(n);
+            var n = Number(cell.v); if (cell.v !== '' && cell.v != null && !isNaN(n) && live(cell)) vals.push(n);
           }
         }); });
       });
@@ -991,19 +1022,28 @@
   // a number must be the value of a formula cell, a typed formula must be in a cell, a text must be in a cell.
   // Checks about things a formula cannot show (colours, dropdowns, Find & Replace, Goal Seek…) are not checked.
   var OWN_SKIP = /Rule|colou?r|green|top 10|dropdown|choices|invalid|break the|Find & Replace|before|WRONG|stored as text|data label|still show|after refreshing|slicer|Report \d|profit of 1 000 000|break-even|Source box|Rows to repeat|custom formula|Google Sheets|sparkline|after step/i;
+  // A formula like =99 or =25*4 has no cell reference: its value is typed, not computed from the data, so it does not count.
+  var REF_RX = /(^|[^A-Za-z0-9_.])\$?[A-Za-z]{1,3}\$?\d+(?![\d(A-Za-z_])|(^|[^A-Za-z0-9_])\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}(?![A-Za-z(])|\b(TODAY|NOW)\(|\[|(^|[^A-Za-z0-9_.])(?!(TRUE|FALSE)\b)[A-Za-z_][A-Za-z0-9_.]{3,}(?![A-Za-z0-9_.(])/i;
+  function hasRef(f) { return REF_RX.test(String(f).replace(/"[^"]*"/g, '')); }
+  // Cells filled by copying keep only "si" (the id of the first formula); they count like that formula.
+  function refCells(cd) {
+    var bySi = {};
+    Object.keys(cd).forEach(function (r) { Object.keys(cd[r] || {}).forEach(function (c) { var x = cd[r][c]; if (x && x.f && x.si) bySi[x.si] = hasRef(x.f); }); });
+    return function (cell) { if (cell.f) return hasRef(cell.f); if (cell.si) return bySi[cell.si] !== false; return false; };
+  }
   function normF(f) { return String(f).replace(/\s|\$/g, '').toUpperCase(); }
   function wsOwn(tid, answers, p) {
     var snap = S.ws && S.ws.task === tid ? wsSnapshot() : null, rec = wsLoad(tid);
     if (!snap) snap = rec && rec.data;
     var nums = [], forms = {}, texts = {}, bad = [];
     if (snap && snap.sheets) Object.keys(snap.sheets).forEach(function (sid) {
-      var cd = snap.sheets[sid] && snap.sheets[sid].cellData || {};
+      var cd = snap.sheets[sid] && snap.sheets[sid].cellData || {}, live = refCells(cd);
       Object.keys(cd).forEach(function (r) { Object.keys(cd[r] || {}).forEach(function (c) {
         var cell = cd[r][c]; if (!cell) return;
         if (cell.f) forms[normF(cell.f)] = 1;
         if (cell.v == null || cell.v === '') return;
         texts[String(cell.v).trim().toLowerCase()] = 1;
-        var n = Number(cell.v); if ((cell.f || cell.si) && !isNaN(n)) nums.push(n);
+        var n = Number(cell.v); if ((cell.f || cell.si) && !isNaN(n) && live(cell)) nums.push(n);
       }); });
     });
     p.checks.forEach(function (c) {
@@ -1177,7 +1217,7 @@
       quiz.addEventListener('submit', function (e) {
         e.preventDefault();
         var l = lessonById(lid), missing = 0;
-        l.quiz.forEach(function (q, i) { if (!quiz.querySelector('input[name="q' + i + '"]:checked')) missing++; });
+        (S.quizRun[lid] && S.quizRun[lid].items || []).forEach(function (q, i) { if (!quiz.querySelector('input[name="q' + i + '"]:checked')) missing++; });
         var msg = document.getElementById('quiz-msg');
         if (missing && !quiz.dataset.confirm) { quiz.dataset.confirm = '1'; msg.textContent = missing + ' question(s) have no answer. Press Submit again to send anyway.'; return; }
         submitQuiz(lid, false);
@@ -1239,7 +1279,7 @@
         });
       });
     });
-    var setKeys = { 'set-open': 'openLessons', 'set-att': 'quizAttempts', 'set-min': 'quizMinutes', 'set-pass': 'passPercent', 'set-show': 'showAnswers', 'set-away': 'maxAway', 'set-qsec': 'qSeconds' };
+    var setKeys = { 'set-open': 'openLessons', 'set-from': 'openFrom', 'set-att': 'quizAttempts', 'set-min': 'quizMinutes', 'set-pass': 'passPercent', 'set-show': 'showAnswers', 'set-away': 'maxAway', 'set-qsec': 'qSeconds' };
     Object.keys(setKeys).forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.addEventListener('change', function () {
@@ -1254,13 +1294,21 @@
     if (!t) { if (S.menuOpen && !e.target.closest('.side')) { S.menuOpen = false; var s = document.querySelector('.side'); if (s) s.classList.remove('open'); } return; }
     if (t.dataset.go) { go(t.dataset.go); return; }
     var act = t.dataset.act;
-    if (act === 'hist') { showHistory(t.dataset.task); return; }
+    if (act === 'hist') {
+      if (t.disabled) return; t.disabled = true;
+      api('history', { student: t.dataset.student, taskId: t.dataset.task }).then(function (r) {
+        t.disabled = false;
+        if (!r.ok) { toast(r.error); return; }
+        S.histData = S.histData || {}; S.histData[t.dataset.task] = r.history; showHistory(t.dataset.task);
+      });
+      return;
+    }
     if (act === 'menu') { S.menuOpen = !S.menuOpen; document.querySelector('.side').classList.toggle('open', S.menuOpen); t.setAttribute('aria-expanded', String(S.menuOpen)); if (S.menuOpen) { var f = document.querySelector('.side a, .side button'); if (f) f.focus(); } }
     if (act === 'logout') { closeSheet(); store(CRED_KEY, null); S.user = null; S.creds = null; S.progress = {}; if (S.baseCourse) S.course = S.baseCourse; S.teacher = null; S.quizResult = {}; S.practiceResult = {}; S.quizRun = null; S.quizDraft = {}; S.quizReview = {}; S.weekly = null; document.querySelectorAll('.toast').forEach(function (x) { x.remove(); }); go('#/login'); }
     if (act === 'quizclose') {
       // Records the attempt whose time ran out, so the next lesson can open.
       t.disabled = true;
-      api('quizStart', { lessonId: t.dataset.lesson }).then(function () { return api('state'); }).then(function (st) { if (st.ok) { S.progress = st.progress || {}; S.settings = st.settings; } render(); });
+      api('quizStart', { lessonId: t.dataset.lesson, qv: 2 }).then(function () { return api('state'); }).then(function (st) { if (st.ok) { S.progress = st.progress || {}; S.settings = st.settings; } render(); });
     }
     if (act === 'quizstart') {
       if (t.dataset.confirm !== '1') { t.dataset.confirm = '1'; t.textContent = 'The timer starts now. Click again to begin'; return; }
@@ -1328,8 +1376,7 @@
       if (r.away > run.away) run.away = r.away;
       if (r.zeroed) {
         delete S.quizRun[lid]; delete S.quizDraft[lid];
-        var l = lessonById(lid);
-        S.quizResult[lid] = { score: 0, max: r.max, results: l.quiz.map(function () { return false; }), attemptsLeft: r.attemptsLeft, answers: [], order: run.order, awayZero: true };
+        S.quizResult[lid] = { score: 0, max: r.max, results: (run.items || []).map(function () { return false; }), attemptsLeft: r.attemptsLeft, answers: [], order: run.order, items: run.items, awayZero: true };
         var prev = S.progress[lid + '-Q'] || { detail: {} };
         S.progress[lid + '-Q'] = { kind: 'quiz', score: r.best, max: r.max, attempts: r.attempts, detail: { last: 0, lastAnswers: [], log: prev.detail.log } };
         S.weekly = null;
