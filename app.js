@@ -169,10 +169,19 @@
   function afterLogin(r) {
     S.quizRun = null; S.quizDraft = {}; S.quizResult = {}; S.practiceResult = {}; S.quizReview = {}; S.weekly = null;
     S.user = r.user; S.progress = r.progress || {}; S.settings = r.settings;
+    S.creds.variant = r.user && r.user.variant || null;
     store(CRED_KEY, S.creds);
     loadVariant().then(function () {
       if (!location.hash || location.hash === '#/login') location.hash = isTeacher() ? '#/teacher' : '#/home'; else render();
     });
+  }
+  // The variant file is fetched once per page load (started early at boot when the variant is known).
+  function variantData(v) {
+    S.varP = S.varP || {};
+    if (S.varP[v]) return S.varP[v];
+    var id = (v < 10 ? '0' : '') + v;
+    return S.varP[v] = window.COURSE_VARIANTS ? Promise.resolve(window.COURSE_VARIANTS[String(v)] || null)
+      : fetch('data/v/v' + id + '.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { delete S.varP[v]; return null; });
   }
   // Every student has personal data in some tasks and projects: overlay data/v/vNN.json on the common course.
   function loadVariant() {
@@ -181,9 +190,7 @@
     var v = S.user && !isTeacher() && Number(S.user.variant);
     if (!v) return Promise.resolve();
     var id = (v < 10 ? '0' : '') + v;
-    var src = window.COURSE_VARIANTS ? Promise.resolve(window.COURSE_VARIANTS[String(v)] || null)
-      : fetch('data/v/v' + id + '.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : null; });
-    return src.then(function (ov) {
+    return variantData(v).then(function (ov) {
       if (!ov) return;
       var c = JSON.parse(JSON.stringify(S.baseCourse));
       c.lessons.forEach(function (l) {
@@ -292,6 +299,7 @@
     if (!isOpen(l)) {
       return shell(l.id, l.title, head + '<div class="card notice">🔒 ' + esc(lockReason(l)) + '</div>', { active: l.id });
     }
+    if (l.practice.some(function (p) { return p.file && p.file.web; })) setTimeout(prefetchUniver, 2000);
     var tabs = '<div class="tabs" role="tablist">' +
       tabBtn(l.id, 'read', 'Read', tab) +
       tabBtn(l.id, 'practice', 'Practice · ' + st.solved + '/' + st.total, tab) +
@@ -819,12 +827,24 @@
     });
     var js = ['react@18.3.1/umd/react.production.min.js', 'react-dom@18.3.1/umd/react-dom.production.min.js', 'rxjs@7.8.1/dist/bundles/rxjs.umd.min.js', '@univerjs/presets@' + UV + '/lib/umd/index.js'];
     UPRESETS.forEach(function (x) { js.push('@univerjs/preset-sheets-' + x + '@' + UV + '/lib/umd/index.js', '@univerjs/preset-sheets-' + x + '@' + UV + '/lib/umd/locales/en-US.js'); });
-    S.univerP = js.reduce(function (p, src) {
-      return p.then(function () {
-        return new Promise(function (ok, fail) { var t = document.createElement('script'); t.src = base + src; t.onload = ok; t.onerror = function () { fail(new Error(src)); }; document.head.appendChild(t); });
-      });
-    }, Promise.resolve()).catch(function (e) { S.univerP = null; throw e; });
+    // All files download at the same time; async = false keeps the order in which they run.
+    S.univerP = Promise.all(js.map(function (src) {
+      return new Promise(function (ok, fail) { var t = document.createElement('script'); t.src = base + src; t.async = false; t.onload = ok; t.onerror = function () { fail(new Error(src)); }; document.head.appendChild(t); });
+    })).catch(function (e) { S.univerP = null; throw e; });
     return S.univerP;
+  }
+  function univerFiles() {
+    var base = CONFIG.vendorBase || 'vendor/npm/', out = [];
+    ['react@18.3.1/umd/react.production.min.js', 'react-dom@18.3.1/umd/react-dom.production.min.js', 'rxjs@7.8.1/dist/bundles/rxjs.umd.min.js', '@univerjs/presets@' + UV + '/lib/umd/index.js'].forEach(function (x) { out.push(base + x); });
+    UPRESETS.forEach(function (x) { out.push(base + '@univerjs/preset-sheets-' + x + '@' + UV + '/lib/umd/index.js', base + '@univerjs/preset-sheets-' + x + '@' + UV + '/lib/umd/locales/en-US.js', base + '@univerjs/preset-sheets-' + x + '@' + UV + '/lib/index.css'); });
+    return out;
+  }
+  // While the student reads a lesson that has web-sheet tasks, the sheet files download in the background,
+  // so "Open the sheet" does not wait for them later.
+  function prefetchUniver() {
+    if (S.univerP || S.univerPre) return;
+    S.univerPre = true;
+    univerFiles().forEach(function (u) { var l = document.createElement('link'); l.rel = 'prefetch'; l.href = u; document.head.appendChild(l); });
   }
   function presetName(x) { return x.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(''); }
   // Same rules as write_xlsx in tools/build.py: "2025-03-01" is a date, "08:30" a time, "=..." a formula.
@@ -1423,15 +1443,24 @@
   window.addEventListener('focus', function () { if (!document.hidden) cameBack(); });
 
   // ---------- boot ----------
+  // The course file, the login check and the student's variant file are fetched at the same time.
+  var saved = store(CRED_KEY), loginP = null;
+  if (saved && saved.login) {
+    S.creds = saved;
+    loginP = api('login');
+    if (saved.variant) variantData(Number(saved.variant));
+  }
   (window.COURSE_DATA ? Promise.resolve(window.COURSE_DATA) : fetch(CONFIG.courseUrl || 'data/course.json').then(function (r) { return r.json(); })).then(function (course) {
     S.course = course;
     document.title = course.title;
-    var saved = store(CRED_KEY);
-    if (saved && saved.login) {
-      S.creds = saved;
+    if (loginP) {
       app.innerHTML = '<div class="loading">Loading…</div>';
-      api('login').then(function (r) {
-        if (r.ok) { S.user = r.user; S.progress = r.progress || {}; S.settings = r.settings; loadVariant().then(render); }
+      loginP.then(function (r) {
+        if (r.ok) {
+          S.user = r.user; S.progress = r.progress || {}; S.settings = r.settings;
+          if ((r.user && r.user.variant || null) !== (S.creds.variant || null)) { S.creds.variant = r.user.variant || null; store(CRED_KEY, S.creds); }
+          loadVariant().then(render);
+        }
         else if (r.network) { app.innerHTML = '<div class="loading">No connection to the server. Check your internet and refresh the page.</div>'; }
         else { S.creds = null; store(CRED_KEY, null); viewLogin(); }
       });
