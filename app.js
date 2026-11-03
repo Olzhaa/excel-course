@@ -32,9 +32,19 @@
       return new Promise(function (res) { setTimeout(function () { res(window.DemoBackend.call(body)); }, 150); });
     }
     if (!CONFIG.apiUrl) return Promise.resolve({ ok: false, error: 'The platform is not connected to its Google Sheet yet (apiUrl is empty in config.js).' });
-    return fetch(CONFIG.apiUrl, { method: 'POST', body: JSON.stringify(body) })
-      .then(function (r) { return r.json(); })
-      .catch(function () { return { ok: false, network: true, error: 'No connection to the server. Check your internet and try again.' }; });
+    // When the server is busy (many students at once) Google may answer with an error page or a lock timeout.
+    // Nothing was saved then, so the request is sent again after a short random wait (up to 3 times).
+    function send(left) {
+      return fetch(CONFIG.apiUrl, { method: 'POST', body: JSON.stringify(body) })
+        .then(function (r) { return r.text(); })
+        .then(function (t) {
+          var j = null; try { j = JSON.parse(t); } catch (e) {}
+          var busy = !j || (j.ok === false && /Lock timeout|too many|Service invoked|simultaneous/i.test(String(j.error)));
+          if (busy && left > 0) return new Promise(function (ok) { setTimeout(ok, 1000 + Math.random() * 3000); }).then(function () { return send(left - 1); });
+          return j || { ok: false, network: true, error: 'The server is busy. Please try again in a moment.' };
+        }, function () { return { ok: false, network: true, error: 'No connection to the server. Check your internet and try again.' }; });
+    }
+    return send(3);
   }
 
   // ---------- course helpers ----------
