@@ -281,6 +281,7 @@ table.gradebook a:hover { color: var(--accent); text-decoration: underline; }
 .qbar > div { height: 100%; background: var(--accent, #17703a); transition: width .4s linear; }
 .qimg canvas, .opt canvas { display: block; color: var(--ink); user-select: none; -webkit-user-select: none; }
 .opt .optletter { font-weight: 700; min-width: 18px; }
+.opt .opttext { user-select: none; -webkit-user-select: none; font-size: 17px; line-height: 1.35; }
 .own-msg { color: var(--bad, #b42318); margin-top: 4px; }
 .hist-dlg { max-width: 760px; width: calc(100vw - 32px); }
 .hist-scroll { max-height: 60vh; overflow: auto; margin-bottom: 12px; }

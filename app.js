@@ -484,7 +484,7 @@
       '<div class="small muted">You cannot go back to a question. When the time is over, the next question opens.</div>' +
       '<div class="qimg"><canvas data-paint="q" width="10" height="10"></canvas></div><div class="opts">';
     run.order.o[i].forEach(function (k, j) {
-      h += '<label class="opt"><input type="radio" name="step" value="' + k + '" aria-label="Option ' + 'ABCD'.charAt(j) + '"><span class="optletter">' + 'ABCD'.charAt(j) + '</span><canvas data-paint="o" data-k="' + k + '" width="10" height="10"></canvas></label>';
+      h += '<label class="opt"><input type="radio" name="step" value="' + k + '" aria-label="Option ' + 'ABCD'.charAt(j) + '"><span class="optletter">' + 'ABCD'.charAt(j) + '</span><span class="opttext">' + mdInline(l.quiz[i].options[k]) + '</span></label>';
     });
     h += '</div><div class="row"><button class="btn primary" type="submit">' + (run.pos === n - 1 ? 'Finish' : 'Next →') + '</button></div></form>';
     return h;
@@ -512,8 +512,9 @@
     var lid = f.getAttribute('data-lesson'), l = lessonById(lid), run = S.quizRun && S.quizRun[lid]; if (!run) return;
     var q = run.items[run.order.q[run.pos]];
     f.querySelectorAll('canvas[data-paint]').forEach(function (cv) {
+      // Only the question is drawn as a picture; the answer options are plain text (a canvas next to the
+      // option letter was cut off in some browsers).
       if (cv.getAttribute('data-paint') === 'q') paintText(cv, q.q, 19, true);
-      else paintText(cv, q.options[Number(cv.getAttribute('data-k'))], 17, false);
     });
     var d = S.quizDraft[lid] && S.quizDraft[lid][run.order.q[run.pos]];
     if (d != null) { var r = f.querySelector('input[value="' + d + '"]'); if (r) r.checked = true; }
