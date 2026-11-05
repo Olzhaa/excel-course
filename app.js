@@ -201,7 +201,7 @@
     if (!v) return Promise.resolve();
     var id = (v < 10 ? '0' : '') + v;
     return variantData(v).then(function (ov) {
-      if (!ov) return;
+      if (!ov) { delete S.varP[v]; return; }
       var c = JSON.parse(JSON.stringify(S.baseCourse));
       c.lessons.forEach(function (l) {
         l.practice = l.practice.map(function (p) { var o = ov.practice && ov.practice[p.id]; return o ? Object.assign({}, p, o) : p; });
@@ -906,7 +906,7 @@
     idx = idx.filter(function (x) { return x !== tid; }); idx.push(tid);
     for (var tries = 0; tries < 12; tries++) {
       try {
-        while (idx.length > 10) localStorage.removeItem('xlws:' + S.user.login + ':' + idx.shift());
+        while (idx.length > 30) localStorage.removeItem('xlws:' + S.user.login + ':' + idx.shift());
         localStorage.setItem(wsKey(tid), JSON.stringify(rec)); localStorage.setItem(ik, JSON.stringify(idx)); return;
       } catch (e) {
         if (idx.length <= 1) return;
@@ -948,7 +948,7 @@
   function wsSave() {
     var snap = wsSnapshot(); if (!snap) return;
     wsTrack(S.ws, snap);
-    wsStore(S.ws.task, { data: snap, pastes: S.ws.pastes, sec: Math.round(S.ws.sec), at: Date.now(), hist: S.ws.hist });
+    wsStore(S.ws.task, { data: snap, url: S.ws.url, pastes: S.ws.pastes, sec: Math.round(S.ws.sec), at: Date.now(), hist: S.ws.hist });
   }
   function closeSheet() {
     if (!S.ws) return;
@@ -969,11 +969,20 @@
     var host = document.createElement('div');
     host.className = 'websheet';
     host.innerHTML = '<div class="loading">Opening the sheet…</div>';
-    var ws = S.ws = { task: tid, host: host, pastes: 0, sec: 0 };
+    var ws = S.ws = { task: tid, host: host, pastes: 0, sec: 0, url: p.file.url };
     placeSheet();
+    // A student must work on their own data: if the personal file did not load, load it again instead of opening the common data.
+    if (S.user && !isTeacher() && Number(S.user.variant) && !S.course.variant) {
+      host.innerHTML = '<div class="loading error">Your own data did not load. Loading it again… If this stays, refresh the page.</div>';
+      S.ws = null;
+      loadVariant().then(function () { if (S.course.variant) render(); });
+      return;
+    }
     Promise.all([loadUniver(), (window.WEB_FILES && WEB_FILES[p.file.url] ? Promise.resolve(JSON.parse(JSON.stringify(WEB_FILES[p.file.url]))) : fetch(p.file.url).then(function (r) { if (!r.ok) throw new Error('file'); return r.json(); }))]).then(function (res) {
       if (S.ws !== ws) return;
       var saved = wsLoad(tid);
+      // A sheet saved from another data file (not this student's) is not used: the sheet starts from the right data.
+      if (saved && saved.data && saved.url && saved.url !== p.file.url) saved = { pastes: saved.pastes, sec: saved.sec, hist: (saved.hist || []).concat([[Math.round(Date.now() / 1000), '', 'Saved sheet had other data; started again from own data']]) };
       ws.base = res[1];
       ws.pastes = saved ? saved.pastes || 0 : 0;
       ws.sec = saved ? saved.sec || 0 : 0;
@@ -1052,7 +1061,7 @@
   // An answer counts only when it comes from the student's own work in the web sheet:
   // a number must be the value of a formula cell, a typed formula must be in a cell, a text must be in a cell.
   // Checks about things a formula cannot show (colours, dropdowns, Find & Replace, Goal Seek…) are not checked.
-  var OWN_SKIP = /Rule|colou?r|green|top 10|dropdown|choices|invalid|break the|Find & Replace|before|WRONG|stored as text|data label|still show|after refreshing|slicer|Report \d|profit of 1 000 000|break-even|Source box|Rows to repeat|custom formula|Google Sheets|sparkline|after step/i;
+  var OWN_SKIP = /Rule|colou?r|green|top 10|dropdown|choices|invalid|break the|Find & Replace|before|WRONG|stored as text|data label|still show|after refreshing|slicer|Report \d|profit of 1 000 000|break-even|Source box|Rows to repeat|custom formula|Google Sheets|sparkline|after step|\bin step \d|^How many\b/i;
   // A formula like =99 or =25*4 has no cell reference: its value is typed, not computed from the data, so it does not count.
   var REF_RX = /(^|[^A-Za-z0-9_.])\$?[A-Za-z]{1,3}\$?\d+(?![\d(A-Za-z_])|(^|[^A-Za-z0-9_])\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}(?![A-Za-z(])|\b(TODAY|NOW)\(|\[|(^|[^A-Za-z0-9_.])(?!(TRUE|FALSE)\b)[A-Za-z_][A-Za-z0-9_.]{3,}(?![A-Za-z0-9_.(])/i;
   function hasRef(f) { return REF_RX.test(String(f).replace(/"[^"]*"/g, '')); }
@@ -1067,6 +1076,8 @@
     var snap = S.ws && S.ws.task === tid ? wsSnapshot() : null, rec = wsLoad(tid);
     if (!snap) snap = rec && rec.data;
     var nums = [], forms = {}, texts = {}, bad = [];
+    // No sheet on this device (another browser, cleared data): nothing to compare, so answers are not blocked. The teacher still sees 0 formulas.
+    if (!snap || !snap.sheets) return bad;
     if (snap && snap.sheets) Object.keys(snap.sheets).forEach(function (sid) {
       var cd = snap.sheets[sid] && snap.sheets[sid].cellData || {}, live = refCells(cd);
       Object.keys(cd).forEach(function (r) { Object.keys(cd[r] || {}).forEach(function (c) {
