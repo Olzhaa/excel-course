@@ -1,0 +1,14 @@
+# Quick safety check on every push: the site's script has no syntax errors and every data file is valid JSON.
+# A broken file here would show students a blank page, so this catches it before anyone opens the site.
+name: check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node --check app.js
+      - run: |
+          find data files -name '*.json' -print0 | xargs -0 -n 50 node -e '
+            for (const f of process.argv.slice(1)) JSON.parse(require("fs").readFileSync(f, "utf8"));
+            console.log("ok", process.argv.length - 1);'
